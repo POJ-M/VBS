@@ -71,7 +71,7 @@ const buildStudentDetailsPDF = (data) => {
       <img class="hdr-logo" src="/poj-logo.png" alt="Presence of Jesus Ministry" onerror="this.style.display='none'" />
       <div>
         <div class="church-name">${ministry}</div>
-        <div class="church-sub">Tiruchirappalli, Tamil Nadu, India</div>
+        <div class="church-sub">Tuticorin, Tamil Nadu, India</div>
       </div>
     </div>
     <div class="vbs-title">${vbsTitle} — VBS ${vbsYear}</div>
@@ -189,7 +189,7 @@ const buildAttendanceTemplatePDF = (data) => {
       <img class="hdr-logo" src="/poj-logo.png" alt="Presence of Jesus Ministry" onerror="this.style.display='none'" />
       <div>
         <div class="church-name">${ministry}</div>
-        <div class="church-sub">Tiruchirappalli, Tamil Nadu, India</div>
+        <div class="church-sub">Tuticorin, Tamil Nadu, India</div>
       </div>
     </div>
     <div class="vbs-title">${vbsTitle} — VBS ${vbsYear}</div>
