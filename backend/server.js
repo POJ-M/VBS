@@ -90,11 +90,15 @@ const allowedOrigins = getAllowedOrigins();
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin) {
-        if (process.env.NODE_ENV !== 'production') return callback(null, true);
-        return callback(new Error('Origin header required in production'));
+      // ✅ Allow requests without origin (health checks, curl, mobile apps)
+      if (!origin) return callback(null, true);
+
+      // ✅ Allow known frontend origins
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
       }
-      if (allowedOrigins.includes(origin)) return callback(null, true);
+
+      // ❌ Block unknown origins
       return callback(new Error(`CORS: Origin '${origin}' not allowed`));
     },
     credentials: true,
