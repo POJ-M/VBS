@@ -1,0 +1,117 @@
+/* ─── additions.css — append these rules ────────────────────────── */
+
+/* FIX 5: Ensure DateInput calendar popup is never clipped by parent overflow */
+/* The calendar uses position:absolute with z-index:9999 now, but we also
+   need to make sure no parent has overflow:hidden that clips it */
+.card {
+  /* Allow absolute children (like the DateInput calendar) to overflow */
+  overflow: visible !important;
+}
+
+/* But table containers still need overflow for horizontal scroll */
+.table-container {
+  overflow-x: auto !important;
+  overflow-y: visible !important;
+}
+
+/* ─── Spin animation for refresh icons ───────────────────────────── */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 0.75s linear infinite; }
+
+/* ─── Mobile layout fix for hamburger button ─────────────────────── */
+@media (max-width: 767px) {
+  /* Give the main content area padding so hamburger button doesn't overlap */
+  .main-content {
+    /* No horizontal margin needed — Header handles the left padding */
+    width: 100%;
+  }
+
+  /* Ensure page content doesn't underlap fixed hamburger on mobile */
+  .page-content {
+    padding: 16px 14px;
+  }
+
+  /* On mobile, cards with date inputs should allow calendar overflow */
+  .card,
+  .form-group,
+  [style*="overflow: hidden"] {
+    overflow: visible !important;
+  }
+
+  /* Tab bars scroll horizontally on mobile */
+  .tab-bar, [class*="tab-"] {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .tab-bar::-webkit-scrollbar { display: none; }
+
+  /* Make tables more readable on mobile */
+  .table-container {
+    overflow-x: auto;
+  }
+
+  /* Stack form grids on mobile */
+  .form-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .form-grid [style*="gridColumn: '1/-1'"],
+  .form-grid [style*="grid-column: 1 / -1"] {
+    grid-column: 1 !important;
+  }
+
+  /* Shrink modals on mobile */
+  .modal {
+    max-width: 100% !important;
+    width: 100% !important;
+    margin: 0 !important;
+    border-radius: 16px 16px 0 0 !important;
+    max-height: 92vh !important;
+  }
+  .modal-overlay {
+    align-items: flex-end !important;
+    padding: 0 !important;
+  }
+
+  /* Grid adjustments */
+  .grid-2, .grid-3, .grid-4 {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* ─── Attendance summary strip ───────────────────────────────────── */
+.att-summary {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.att-summary-card {
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-xs);
+  min-width: 90px;
+  text-align: center;
+}
+.att-summary-card .val {
+  font-size: 1.3rem;
+  font-weight: 800;
+  line-height: 1;
+}
+.att-summary-card .lbl {
+  font-size: 0.64rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  margin-top: 4px;
+}
+
+/* ─── Rate pill ──────────────────────────────────────────────────── */
+.rate-pill { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 99px; font-size: 0.73rem; font-weight: 800; }
+.rate-pill.high { background: #dcfce7; color: #15803d; }
+.rate-pill.mid  { background: #fef9c3; color: #a16207; }
+.rate-pill.low  { background: #fee2e2; color: #b91c1c; }
