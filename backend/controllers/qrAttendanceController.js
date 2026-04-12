@@ -1,3 +1,4 @@
+// backend/controllers/qrAttendanceController.js — Enhanced with admin time windows
 const crypto = require('crypto');
 const QRSession = require('../models/QRSession');
 const { TeacherAttendance } = require('../models/Attendance');
@@ -8,9 +9,11 @@ const { normalizeToISTMidnight } = require('../services/attendanceWindowService'
 // ─── Helpers ──────────────────────────────────────────────────────
 const generateToken = () => crypto.randomBytes(32).toString('hex');
 
-const getISTTimeString = () => {
-  const now = new Date();
-  return now.toLocaleTimeString('en-IN', {
+/**
+ * Returns current IST time as HH:MM string
+ */
+const getISTTimeString = (date = new Date()) => {
+  return date.toLocaleTimeString('en-IN', {
     timeZone: 'Asia/Kolkata',
     hour: '2-digit',
     minute: '2-digit',
@@ -18,25 +21,94 @@ const getISTTimeString = () => {
   });
 };
 
-// FIX: Safe token cleaning — strip prefix and validate format
+/**
+ * Returns current IST time as HH:MM:SS string (for display)
+ */
+const getISTTimeStringFull = (date = new Date()) => {
+  return date.toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+};
+
+/**
+ * Parse "HH:MM" time string on a given date in IST → returns UTC Date
+ * e.g. "08:30" on 2026-06-10 IST → 2026-06-10T03:00:00.000Z
+ */
+const parseISTTime = (timeStr, baseDate) => {
+  if (!timeStr || !baseDate) return null;
+  const [hours, minutes] = timeStr.split(':').map(Number);
+  if (isNaN(hours) || isNaN(minutes)) return null;
+
+  // Get IST date parts from the base date
+  const formatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  const parts = formatter.formatToParts(baseDate);
+  const get = (type) => parseInt(parts.find(p => p.type === type)?.value || '0', 10);
+  const year = get('year');
+  const month = get('month') - 1; // 0-indexed
+  const day = get('day');
+
+  // Construct as UTC: IST = UTC+5:30
+  const istOffset = 5.5 * 60 * 60 * 1000; // 5h30m in ms
+  const utcMs = Date.UTC(year, month, day, hours, minutes, 0, 0) - istOffset;
+  return new Date(utcMs);
+};
+
+/**
+ * Determine scan status based on admin-configured time window.
+ *
+ * Logic:
+ * - If onTimeUntil is set by admin:
+ *   - scanTime <= onTimeUntil  → "present"
+ *   - scanTime >  onTimeUntil  → "late"
+ * - Fallback (legacy): sessions older than 30 min → "late"
+ *
+ * @param {QRSession} session
+ * @param {Date} scanTime
+ * @returns {'present'|'late'}
+ */
+const determineScanStatus = (session, scanTime) => {
+  if (session.onTimeUntil) {
+    return scanTime <= new Date(session.onTimeUntil) ? 'present' : 'late';
+  }
+  // Legacy fallback: 30-min window from session creation
+  const sessionAgeMin = (scanTime - session.createdAt) / (1000 * 60);
+  return sessionAgeMin <= 30 ? 'present' : 'late';
+};
+
+// Token format validation
 const cleanToken = (raw) => {
   const token = raw.startsWith('QR_ATTENDANCE:') ? raw.slice(14) : raw;
-  // Validate token is a 64-char hex string (crypto.randomBytes(32).toString('hex'))
   if (!/^[0-9a-f]{64}$/.test(token)) return null;
   return token;
 };
 
-// @desc    Create a new QR session (admin generates QR code)
-// @route   POST /api/qr-attendance/sessions
-// @access  Admin
+// ─── @desc  Create QR session (admin) ────────────────────────────
+// @route POST /api/qr-attendance/sessions
+// @access Admin
 const createQRSession = async (req, res, next) => {
   try {
-    const { date, label, expiryMinutes = 10 } = req.body;
+    const {
+      date,
+      label,
+      expiryMinutes = 60,
+      // NEW: Admin-configurable time window
+      // windowStartTime: "HH:MM" — when session "opens" (informational)
+      // onTimeUntilTime: "HH:MM" — scans up to this time are "present"; after = "late"
+      windowStartTime,
+      onTimeUntilTime,
+    } = req.body;
 
     if (!date) {
       return res.status(400).json({ success: false, message: 'Date is required' });
     }
-    // FIX: Validate expiryMinutes range
+
     const expiry = parseInt(expiryMinutes, 10);
     if (isNaN(expiry) || expiry < 1 || expiry > 480) {
       return res.status(400).json({ success: false, message: 'expiryMinutes must be between 1 and 480' });
@@ -59,12 +131,39 @@ const createQRSession = async (req, res, next) => {
     }
 
     const token = generateToken();
-    const expiresAt = new Date(Date.now() + expiry * 60 * 1000);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + expiry * 60 * 1000);
 
-    // FIX: Sanitize label to prevent stored XSS
+    // ── Parse admin-defined time window ───────────────────────────
+    let onTimeUntilDate = null;
+    let resolvedWindowStart = windowStartTime || null;
+    let resolvedOnTimeUntil = onTimeUntilTime || null;
+
+    if (onTimeUntilTime) {
+      // Validate HH:MM format
+      if (!/^\d{2}:\d{2}$/.test(onTimeUntilTime)) {
+        return res.status(400).json({ success: false, message: 'onTimeUntilTime must be in HH:MM format' });
+      }
+      onTimeUntilDate = parseISTTime(onTimeUntilTime, attendanceDate);
+      if (!onTimeUntilDate) {
+        return res.status(400).json({ success: false, message: 'Invalid onTimeUntilTime' });
+      }
+
+      // onTimeUntil must be before expiresAt
+      if (onTimeUntilDate >= expiresAt) {
+        return res.status(400).json({
+          success: false,
+          message: 'On-time cutoff must be before session expiry',
+        });
+      }
+    }
+
+    // Sanitize label
     const safeLabel = label
       ? label.trim().replace(/[<>"'&]/g, '').slice(0, 100)
-      : `Attendance — ${attendanceDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })}`;
+      : `Attendance — ${attendanceDate.toLocaleDateString('en-IN', {
+          timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric',
+        })}`;
 
     const session = await QRSession.create({
       token,
@@ -74,6 +173,9 @@ const createQRSession = async (req, res, next) => {
       expiresAt,
       label: safeLabel,
       isActive: true,
+      onTimeUntil: onTimeUntilDate,
+      windowStartTime: resolvedWindowStart,
+      onTimeUntilTimeStr: resolvedOnTimeUntil,
     });
 
     res.status(201).json({
@@ -90,6 +192,11 @@ const createQRSession = async (req, res, next) => {
         isActive: session.isActive,
         scansCount: 0,
         qrPayload: `QR_ATTENDANCE:${token}`,
+        // Time window info
+        onTimeUntil: session.onTimeUntil,
+        windowStartTime: session.windowStartTime,
+        onTimeUntilTimeStr: session.onTimeUntilTimeStr,
+        hasTimeWindow: !!onTimeUntilDate,
       },
     });
   } catch (err) {
@@ -97,9 +204,7 @@ const createQRSession = async (req, res, next) => {
   }
 };
 
-// @desc    Get all QR sessions (admin view)
-// @route   GET /api/qr-attendance/sessions
-// @access  Admin
+// ─── @desc  Get all QR sessions ───────────────────────────────────
 const getQRSessions = async (req, res, next) => {
   try {
     const { date, vbsYear } = req.query;
@@ -119,9 +224,7 @@ const getQRSessions = async (req, res, next) => {
   }
 };
 
-// @desc    Get a single QR session by ID
-// @route   GET /api/qr-attendance/sessions/:id
-// @access  Admin
+// ─── @desc  Get single QR session ─────────────────────────────────
 const getQRSession = async (req, res, next) => {
   try {
     const session = await QRSession.findById(req.params.id)
@@ -136,6 +239,10 @@ const getQRSession = async (req, res, next) => {
     const isExpired = now > session.expiresAt;
     const remainingMs = Math.max(0, session.expiresAt - now);
 
+    // Status for current moment
+    const currentStatus = determineScanStatus(session, now);
+    const isInLateWindow = session.onTimeUntil && now > new Date(session.onTimeUntil);
+
     res.json({
       success: true,
       data: {
@@ -143,6 +250,8 @@ const getQRSession = async (req, res, next) => {
         isExpired,
         remainingSeconds: Math.floor(remainingMs / 1000),
         scansCount: session.scans.length,
+        currentScanStatus: currentStatus,
+        isInLateWindow,
       },
     });
   } catch (err) {
@@ -150,9 +259,7 @@ const getQRSession = async (req, res, next) => {
   }
 };
 
-// @desc    Deactivate a QR session
-// @route   PUT /api/qr-attendance/sessions/:id/deactivate
-// @access  Admin
+// ─── @desc  Deactivate QR session ─────────────────────────────────
 const deactivateQRSession = async (req, res, next) => {
   try {
     const session = await QRSession.findByIdAndUpdate(
@@ -169,9 +276,9 @@ const deactivateQRSession = async (req, res, next) => {
   }
 };
 
-// @desc    Teacher scans QR code — marks their attendance
-// @route   POST /api/qr-attendance/scan
-// @access  Teacher (must be logged in)
+// ─── @desc  Teacher scans QR code ─────────────────────────────────
+// @route POST /api/qr-attendance/scan
+// @access Teacher
 const scanQRCode = async (req, res, next) => {
   try {
     const { token: rawToken } = req.body;
@@ -180,7 +287,6 @@ const scanQRCode = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'QR token is required' });
     }
 
-    // FIX: Validate and clean the token
     const token = cleanToken(rawToken);
     if (!token) {
       return res.status(400).json({ success: false, message: 'Invalid QR code format' });
@@ -224,9 +330,24 @@ const scanQRCode = async (req, res, next) => {
       });
     }
 
-    const sessionAgeMin = (now - session.createdAt) / (1000 * 60);
-    const status = sessionAgeMin <= 30 ? 'present' : 'late';
-    const arrivalTime = getISTTimeString();
+    // ── Determine status using admin time window ──────────────────
+    const status = determineScanStatus(session, now);
+    const arrivalTime = getISTTimeString(now);
+    const arrivalTimeFull = getISTTimeStringFull(now);
+
+    // Build status context for response
+    const statusContext = session.onTimeUntil
+      ? {
+          method: 'admin_window',
+          onTimeUntil: session.onTimeUntilTimeStr,
+          scanTime: arrivalTime,
+          isLate: status === 'late',
+        }
+      : {
+          method: 'legacy_30min',
+          sessionAgeMin: Math.round((now - session.createdAt) / (1000 * 60)),
+          isLate: status === 'late',
+        };
 
     session.scans.push({
       teacher: teacher._id,
@@ -234,20 +355,25 @@ const scanQRCode = async (req, res, next) => {
       scannedAt: now,
       status,
       arrivalTime,
+      scannedAtTimeStr: arrivalTimeFull,
     });
     await session.save();
 
+    // ── Upsert TeacherAttendance record ───────────────────────────
     const existing = await TeacherAttendance.findOne({
       date: session.date,
       teacher: teacher._id,
     });
 
     if (existing) {
-      // FIX: Capture previousStatus BEFORE mutation (was a bug in original)
       const previousStatus = existing.status;
       existing.status = status;
       existing.arrivalTime = arrivalTime;
-      existing.remarks = `Marked via QR scan at ${arrivalTime}`;
+      existing.remarks = `Marked via QR scan at ${arrivalTimeFull}${
+        status === 'late' && session.onTimeUntilTimeStr
+          ? ` (on-time cutoff was ${session.onTimeUntilTimeStr})`
+          : ''
+      }`;
       existing.isModified = true;
       existing.modificationHistory.push({
         modifiedBy: req.user._id,
@@ -256,10 +382,10 @@ const scanQRCode = async (req, res, next) => {
         changes: [{
           entityId: teacher._id.toString(),
           entityName: teacher.name,
-          previousStatus, // ← correctly captured before mutation
+          previousStatus,
           newStatus: status,
         }],
-        reason: 'QR code scan',
+        reason: `QR scan at ${arrivalTimeFull}`,
       });
       await existing.save();
     } else {
@@ -269,23 +395,40 @@ const scanQRCode = async (req, res, next) => {
         vbsYear: session.vbsYear,
         status,
         arrivalTime,
-        remarks: `Marked via QR scan at ${arrivalTime}`,
+        remarks: `Marked via QR scan at ${arrivalTimeFull}${
+          status === 'late' && session.onTimeUntilTimeStr
+            ? ` (on-time cutoff was ${session.onTimeUntilTimeStr})`
+            : ''
+        }`,
         markedBy: req.user._id,
         markedByName: req.user.name,
       });
     }
 
+    // ── Build response message ────────────────────────────────────
+    let message;
+    if (status === 'present') {
+      message = `✓ Attendance marked as Present at ${arrivalTimeFull}`;
+    } else {
+      const cutoffText = session.onTimeUntilTimeStr
+        ? ` (on-time cutoff was ${session.onTimeUntilTimeStr})`
+        : '';
+      message = `⚠️ Marked as Late — arrived at ${arrivalTimeFull}${cutoffText}`;
+    }
+
     res.json({
       success: true,
-      message: status === 'present'
-        ? `✓ Attendance marked! Present at ${arrivalTime}`
-        : `✓ Attendance marked as Late at ${arrivalTime}`,
+      message,
       data: {
         teacherName: teacher.name,
         status,
         arrivalTime,
+        arrivalTimeFull,
         date: session.date,
         sessionLabel: session.label,
+        statusContext,
+        // Window info for display
+        onTimeUntilTimeStr: session.onTimeUntilTimeStr || null,
       },
     });
   } catch (err) {
@@ -293,18 +436,17 @@ const scanQRCode = async (req, res, next) => {
   }
 };
 
-// @desc    Admin manually marks on behalf of teacher
-// @route   POST /api/qr-attendance/admin-scan
-// @access  Admin
+// ─── @desc  Admin manual mark for teacher ─────────────────────────
+// @route POST /api/qr-attendance/admin-scan
+// @access Admin
 const adminScanForTeacher = async (req, res, next) => {
   try {
-    const { sessionId, teacherId, status = 'present' } = req.body;
+    const { sessionId, teacherId, status = 'present', overrideTime } = req.body;
 
     if (!sessionId || !teacherId) {
       return res.status(400).json({ success: false, message: 'sessionId and teacherId are required' });
     }
 
-    // FIX: Validate status value
     if (!['present', 'late', 'absent', 'leave'].includes(status)) {
       return res.status(400).json({ success: false, message: 'Invalid status value' });
     }
@@ -319,9 +461,11 @@ const adminScanForTeacher = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Teacher not found' });
     }
 
-    const arrivalTime = getISTTimeString();
     const now = new Date();
+    const arrivalTime = overrideTime || getISTTimeString(now);
+    const arrivalTimeFull = getISTTimeStringFull(now);
 
+    // Remove previous scan for this teacher (admin override)
     session.scans = session.scans.filter(
       (s) => s.teacher?.toString() !== teacher._id.toString()
     );
@@ -331,6 +475,7 @@ const adminScanForTeacher = async (req, res, next) => {
       scannedAt: now,
       status,
       arrivalTime,
+      scannedAtTimeStr: arrivalTimeFull,
     });
     await session.save();
 
@@ -340,11 +485,10 @@ const adminScanForTeacher = async (req, res, next) => {
     });
 
     if (existing) {
-      // FIX: Capture previousStatus BEFORE mutation (was a bug in original adminScanForTeacher)
       const previousStatus = existing.status;
       existing.status = status;
       existing.arrivalTime = arrivalTime;
-      existing.remarks = `Manually marked by admin via QR session`;
+      existing.remarks = `Manually marked by admin via QR session at ${arrivalTimeFull}`;
       existing.isModified = true;
       existing.modificationHistory.push({
         modifiedBy: req.user._id,
@@ -353,7 +497,7 @@ const adminScanForTeacher = async (req, res, next) => {
         changes: [{
           entityId: teacher._id.toString(),
           entityName: teacher.name,
-          previousStatus, // ← correctly captured before mutation
+          previousStatus,
           newStatus: status,
         }],
         reason: 'Admin manual mark via QR session',
@@ -366,7 +510,7 @@ const adminScanForTeacher = async (req, res, next) => {
         vbsYear: session.vbsYear,
         status,
         arrivalTime,
-        remarks: `Manually marked by admin via QR session`,
+        remarks: `Manually marked by admin via QR session at ${arrivalTimeFull}`,
         markedBy: req.user._id,
         markedByName: req.user.name,
       });
@@ -375,19 +519,18 @@ const adminScanForTeacher = async (req, res, next) => {
     res.json({
       success: true,
       message: `${teacher.name} marked as ${status}`,
-      data: { teacherName: teacher.name, status, arrivalTime },
+      data: { teacherName: teacher.name, status, arrivalTime, arrivalTimeFull },
     });
   } catch (err) {
     next(err);
   }
 };
 
-// @desc    Validate QR token
-// @route   GET /api/qr-attendance/validate/:token
-// @access  Teacher
+// ─── @desc  Validate QR token ─────────────────────────────────────
+// @route GET /api/qr-attendance/validate/:token
+// @access Teacher
 const validateToken = async (req, res, next) => {
   try {
-    // FIX: Validate token format before querying DB
     const token = cleanToken(req.params.token);
     if (!token) {
       return res.status(400).json({ success: false, message: 'Invalid QR code format' });
@@ -404,14 +547,22 @@ const validateToken = async (req, res, next) => {
     const remainingMs = Math.max(0, session.expiresAt - now);
 
     let alreadyScanned = false;
+    let existingScanStatus = null;
+
     if (req.user?.role === 'teacher') {
       const teacher = await Teacher.findOne({ user: req.user._id });
       if (teacher) {
-        alreadyScanned = session.scans.some(
+        const existingScan = session.scans.find(
           (s) => s.teacher?.toString() === teacher._id.toString()
         );
+        alreadyScanned = !!existingScan;
+        existingScanStatus = existingScan?.status || null;
       }
     }
+
+    // What status would a scan right now get?
+    const projectedStatus = !isExpired ? determineScanStatus(session, now) : null;
+    const isInLateWindow = session.onTimeUntil && now > new Date(session.onTimeUntil);
 
     res.json({
       success: true,
@@ -423,8 +574,16 @@ const validateToken = async (req, res, next) => {
         isActive: session.isActive,
         isExpired,
         alreadyScanned,
+        existingScanStatus,
         remainingSeconds: Math.floor(remainingMs / 1000),
         scansCount: session.scans.length,
+        projectedStatus,
+        isInLateWindow,
+        // Time window config
+        windowStartTime: session.windowStartTime,
+        onTimeUntilTimeStr: session.onTimeUntilTimeStr,
+        onTimeUntil: session.onTimeUntil,
+        hasTimeWindow: !!session.onTimeUntil,
       },
     });
   } catch (err) {
