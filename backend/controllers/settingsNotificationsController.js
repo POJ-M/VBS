@@ -42,6 +42,48 @@ const activateYear = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+// ── NEW: Toggle attendance window stop/start ────────────────────────
+// @desc    Stop or resume the attendance window (for leave days, cancelled sessions)
+// @route   PUT /api/settings/:id/toggle-window
+// @access  Admin
+const toggleAttendanceWindow = async (req, res, next) => {
+  try {
+    const { stop, reason } = req.body;
+
+    const settings = await Settings.findById(req.params.id);
+    if (!settings) return res.status(404).json({ success: false, message: 'Settings not found' });
+
+    if (!settings.isActive) {
+      return res.status(400).json({ success: false, message: 'Can only toggle the active VBS year' });
+    }
+
+    const isStopping = stop === true;
+
+    settings.timeWindow.attendanceStopped = isStopping;
+    settings.timeWindow.stopReason = isStopping
+      ? (reason?.trim() || 'Attendance window stopped by admin.')
+      : '';
+    settings.timeWindow.stoppedAt = isStopping ? new Date() : null;
+    settings.timeWindow.stoppedBy = isStopping ? req.user._id : null;
+
+    await settings.save();
+
+    const message = isStopping
+      ? `Attendance window stopped. Reason: ${settings.timeWindow.stopReason}`
+      : 'Attendance window resumed. Teachers can now submit attendance.';
+
+    res.json({
+      success: true,
+      message,
+      data: {
+        attendanceStopped: settings.timeWindow.attendanceStopped,
+        stopReason: settings.timeWindow.stopReason,
+        stoppedAt: settings.timeWindow.stoppedAt,
+      },
+    });
+  } catch (err) { next(err); }
+};
+
 // ─── NOTIFICATIONS ─────────────────────────────────────────────────
 
 const getNotifications = async (req, res, next) => {
@@ -104,5 +146,6 @@ const broadcastNotification = async (req, res, next) => {
 
 module.exports = {
   getSettings, getActiveSettings, createSettings, updateSettings, activateYear,
+  toggleAttendanceWindow,
   getNotifications, markNotificationRead, markAllRead, broadcastNotification,
 };
