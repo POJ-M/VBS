@@ -32,7 +32,7 @@ const {
 } = require('../controllers/reportsController');
 const {
   getSettings, getActiveSettings, createSettings, updateSettings, activateYear,
-  getNotifications, markNotificationRead, markAllRead, broadcastNotification,
+  getNotifications, markNotificationRead, markAllRead, broadcastNotification, toggleAttendanceWindow,
 } = require('../controllers/settingsNotificationsController');
 const { getTeacherExportData } = require('../controllers/exportController');
 
@@ -195,6 +195,7 @@ router.get('/settings/active', getActiveSettings);
 router.post('/settings', protect, adminOnly, createSettings);
 router.put('/settings/:id', protect, adminOnly, updateSettings);
 router.put('/settings/:id/activate', protect, adminOnly, activateYear);
+router.put('/settings/:id/toggle-window', protect, adminOnly, mutationLimiter, toggleAttendanceWindow);
 
 // ─── NOTIFICATIONS ───────────────────────────────────────────────────
 router.get('/notifications', protect, getNotifications);
