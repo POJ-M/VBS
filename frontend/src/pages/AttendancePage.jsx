@@ -5,9 +5,11 @@ import {
   Edit2, Trash2, History, Save, Check, X, Clock, AlertCircle,
   RefreshCw, ChevronLeft, ChevronRight, Users, GraduationCap,
   Heart, Calendar, CheckSquare, AlertTriangle, Info, BarChart2,
-  Download, Printer, FileText, UserCheck
+  Download, Printer, FileText, UserCheck, StopCircle, PlayCircle,
+  Pause, Ban
 } from 'lucide-react';
 import { attendanceAPI, classesAPI, teachersAPI, volunteersAPI, settingsAPI } from '../services/api';
+import api from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useActiveYear } from '../contexts/ActiveYearContext';
 import DateInput from '../components/Dateinput';
@@ -43,12 +45,11 @@ const formatShortDate = (dateStr) => {
 // ─── Status Badge ──────────────────────────────────────────────────
 const STATUS_MAP = {
   present: { bg: '#dcfce7', color: '#15803d', label: '✓ Present' },
-  absent: { bg: '#fee2e2', color: '#b91c1c', label: '✗ Absent' },
-  late: { bg: '#fef9c3', color: '#a16207', label: '⏰ Late' },
-  leave: { bg: '#ede9fe', color: '#6d28d9', label: '📋 Leave' },
+  absent:  { bg: '#fee2e2', color: '#b91c1c', label: '✗ Absent' },
+  late:    { bg: '#fef9c3', color: '#a16207', label: '⏰ Late' },
+  leave:   { bg: '#ede9fe', color: '#6d28d9', label: '📋 Leave' },
   halfDay: { bg: '#ffedd5', color: '#c2410c', label: '½ Half Day' },
 };
-
 const StatusBadge = ({ status }) => {
   const s = STATUS_MAP[status] || { bg: '#f1f5f9', color: '#475569', label: status || '—' };
   return <span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span>;
@@ -63,45 +64,179 @@ const RateBar = ({ rate }) => (
   </div>
 );
 
+// ─── Stop Window Modal ─────────────────────────────────────────────
+function StopWindowModal({ isOpen, onClose, settings, onToggle, loading }) {
+  const [reason, setReason] = useState('');
+  const isStopped = settings?.timeWindow?.attendanceStopped;
+
+  if (!isOpen) return null;
+
+  const handleSubmit = () => {
+    onToggle({ stop: !isStopped, reason: isStopped ? '' : reason });
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+      onClick={onClose}>
+      <div style={{ background: 'white', borderRadius: 20, width: '100%', maxWidth: 460, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}
+        onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 38, height: 38, borderRadius: 10, background: isStopped ? '#f0fdf4' : '#fef2f2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {isStopped ? <PlayCircle size={18} color="#16a34a" /> : <StopCircle size={18} color="#dc2626" />}
+            </div>
+            <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>
+              {isStopped ? 'Resume Attendance Window' : 'Stop Attendance Window'}
+            </span>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)', display: 'flex', padding: 4, borderRadius: 6 }}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div style={{ padding: '20px 24px' }}>
+          {isStopped ? (
+            <div>
+              <div style={{ padding: '12px 16px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, marginBottom: 16 }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#b91c1c', marginBottom: 4 }}>Currently Stopped</div>
+                <div style={{ fontSize: '0.82rem', color: '#7f1d1d' }}>{settings?.timeWindow?.stopReason || 'No reason provided'}</div>
+              </div>
+              <p style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)', lineHeight: 1.6 }}>
+                Resuming will allow teachers to submit attendance again within the configured time window.
+              </p>
+            </div>
+          ) : (
+            <div>
+              <p style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)', lineHeight: 1.6, marginBottom: 16 }}>
+                Stopping the window will prevent teachers from submitting attendance until it's resumed. Use this for <strong>leave days, holidays,</strong> or <strong>cancelled sessions</strong>.
+              </p>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Reason <span style={{ color: 'var(--color-text-muted)', fontWeight: 400, fontSize: '0.75rem' }}>(recommended)</span></label>
+                <textarea
+                  className="form-textarea"
+                  rows={3}
+                  value={reason}
+                  onChange={e => setReason(e.target.value)}
+                  placeholder="e.g., Public holiday, Teacher meeting day, Rain holiday..."
+                  style={{ resize: 'none' }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ padding: '14px 24px', borderTop: '1px solid var(--color-border)', display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <button className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
+          <button
+            className={`btn ${isStopped ? 'btn-success' : 'btn-danger'}`}
+            onClick={handleSubmit}
+            disabled={loading}
+          >
+            {loading
+              ? <><span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> Processing…</>
+              : isStopped
+                ? <><PlayCircle size={15} /> Resume Window</>
+                : <><StopCircle size={15} /> Stop Window</>
+            }
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Window Status Banner ──────────────────────────────────────────
-function WindowBanner({ showForTeacher }) {
+function WindowBanner({ user, activeSettingsId, activeSettings }) {
+  const qc = useQueryClient();
+  const [showStopModal, setShowStopModal] = useState(false);
+
   const { data: windowData, refetch } = useQuery({
     queryKey: ['window-status'],
     queryFn: () => attendanceAPI.getWindowStatus().then(r => r.data?.data),
     refetchInterval: 60000,
   });
+
+  const toggleMut = useMutation({
+    mutationFn: (data) => api.put(`/settings/${activeSettingsId}/toggle-window`, data),
+    onSuccess: (res) => {
+      qc.invalidateQueries(['window-status']);
+      qc.invalidateQueries(['active-settings']);
+      toast.success(res.data?.message || 'Window updated');
+      setShowStopModal(false);
+    },
+    onError: (err) => toast.error(err.response?.data?.message || 'Failed to update window'),
+  });
+
+  const isStopped = windowData?.stopped;
+  const isAdmin = user?.role === 'admin';
+
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px',
-      borderRadius: 10, marginBottom: 16, flexWrap: 'wrap',
-      background: windowData?.allowed ? '#f0fdf4' : '#fef2f2',
-      border: `1px solid ${windowData?.allowed ? '#bbf7d0' : '#fecaca'}`
-    }}>
-      <span style={{
-        padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 800,
-        letterSpacing: '0.05em', textTransform: 'uppercase',
-        background: windowData?.allowed ? '#16a34a' : '#dc2626', color: 'white'
+    <>
+      <StopWindowModal
+        isOpen={showStopModal}
+        onClose={() => setShowStopModal(false)}
+        settings={activeSettings}
+        onToggle={(data) => toggleMut.mutate(data)}
+        loading={toggleMut.isPending}
+      />
+
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px',
+        borderRadius: 10, marginBottom: 16, flexWrap: 'wrap',
+        background: isStopped ? '#fff7ed' : windowData?.allowed ? '#f0fdf4' : '#fef2f2',
+        border: `1px solid ${isStopped ? '#fed7aa' : windowData?.allowed ? '#bbf7d0' : '#fecaca'}`,
       }}>
-        {windowData?.allowed ? 'Window OPEN' : 'Window CLOSED'}
-      </span>
-      <span style={{ fontSize: '0.82rem', color: 'var(--color-text-secondary)', flex: 1 }}>
-        {windowData?.message || 'Loading...'}
-      </span>
-      {windowData?.allowed && windowData?.minutesRemaining > 0 && (
-        <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#92400e', background: '#fef3c7', padding: '3px 10px', borderRadius: 99 }}>
-          <Clock size={13} style={{ marginRight: 4, verticalAlign: 'middle' }} />
-          {windowData.minutesRemaining} min remaining
+        {/* Status pill */}
+        <span style={{
+          padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 800,
+          letterSpacing: '0.05em', textTransform: 'uppercase',
+          background: isStopped ? '#ea580c' : windowData?.allowed ? '#16a34a' : '#dc2626',
+          color: 'white', display: 'flex', alignItems: 'center', gap: 5,
+        }}>
+          {isStopped ? <><Ban size={11} /> Stopped</> : windowData?.allowed ? 'Window OPEN' : 'Window CLOSED'}
         </span>
-      )}
-      <button onClick={() => refetch()} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)', display: 'flex' }}>
-        <RefreshCw size={14} />
-      </button>
-    </div>
+
+        <span style={{ fontSize: '0.82rem', color: 'var(--color-text-secondary)', flex: 1 }}>
+          {windowData?.message || 'Loading...'}
+        </span>
+
+        {windowData?.allowed && windowData?.minutesRemaining > 0 && !isStopped && (
+          <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#92400e', background: '#fef3c7', padding: '3px 10px', borderRadius: 99 }}>
+            <Clock size={13} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+            {windowData.minutesRemaining} min remaining
+          </span>
+        )}
+
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button onClick={() => refetch()} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)', display: 'flex' }}>
+            <RefreshCw size={14} />
+          </button>
+
+          {/* Admin stop/resume button */}
+          {isAdmin && activeSettingsId && (
+            <button
+              onClick={() => setShowStopModal(true)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px',
+                borderRadius: 8, border: `1.5px solid ${isStopped ? '#16a34a' : '#dc2626'}`,
+                background: isStopped ? '#f0fdf4' : '#fef2f2',
+                color: isStopped ? '#15803d' : '#b91c1c',
+                cursor: 'pointer', fontFamily: 'var(--font-sans)',
+                fontSize: '0.75rem', fontWeight: 700,
+              }}
+            >
+              {isStopped ? <><PlayCircle size={13} /> Resume</> : <><Pause size={13} /> Stop Window</>}
+            </button>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
 
 // ─── Pending Classes Panel ─────────────────────────────────────────
-function PendingClassesPanel({ date, vbsYear, classes, submittedRecords, onSubmitForClass }) {
+function PendingClassesPanel({ date, vbsYear, classes, submittedRecords }) {
   const submittedClassIds = new Set((submittedRecords || []).map(r => r.class?._id?.toString() || r.class?.toString()));
   const pendingClasses = (classes || []).filter(c => !submittedClassIds.has(c._id?.toString()));
 
@@ -110,15 +245,15 @@ function PendingClassesPanel({ date, vbsYear, classes, submittedRecords, onSubmi
       <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 12, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 10 }}>
         <CheckSquare size={18} color="#16a34a" />
         <div>
-          <div style={{ fontWeight: 700, color: '#15803d', fontSize: '0.875rem' }}>All classes have submitted attendance!</div>
-          <div style={{ color: '#166534', fontSize: '0.78rem', marginTop: 2 }}>{formatDisplayDate(date)} — {(classes || []).length} classes submitted</div>
+          <div style={{ fontWeight: 700, color: '#15803d', fontSize: '0.875rem' }}>All classes submitted!</div>
+          <div style={{ color: '#166534', fontSize: '0.78rem', marginTop: 2 }}>{formatDisplayDate(date)} — {(classes || []).length} classes</div>
         </div>
       </div>
     );
   }
 
   const CATEGORY_COLORS = { Beginner: '#ede9fe', Primary: '#dbeafe', Junior: '#dcfce7', Inter: '#fef9c3' };
-  const CATEGORY_TEXT = { Beginner: '#5b21b6', Primary: '#1d4ed8', Junior: '#15803d', Inter: '#92400e' };
+  const CATEGORY_TEXT  = { Beginner: '#5b21b6', Primary: '#1d4ed8', Junior: '#15803d', Inter: '#92400e' };
 
   return (
     <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 12, padding: '14px 18px', marginBottom: 16 }}>
@@ -126,7 +261,7 @@ function PendingClassesPanel({ date, vbsYear, classes, submittedRecords, onSubmi
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <AlertTriangle size={16} color="#d97706" />
           <span style={{ fontWeight: 700, color: '#92400e', fontSize: '0.875rem' }}>
-            {pendingClasses.length} class{pendingClasses.length > 1 ? 'es' : ''} pending attendance
+            {pendingClasses.length} class{pendingClasses.length > 1 ? 'es' : ''} pending
           </span>
           <span style={{ fontSize: '0.75rem', color: '#a16207', background: '#fef3c7', padding: '2px 8px', borderRadius: 99, fontWeight: 600 }}>
             {formatShortDate(date)}
@@ -136,261 +271,20 @@ function PendingClassesPanel({ date, vbsYear, classes, submittedRecords, onSubmi
           {(submittedRecords || []).length}/{(classes || []).length} submitted
         </span>
       </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8 }}>
         {pendingClasses.map(cls => (
-          <div key={cls._id}
-            style={{
-              background: 'white', border: '1px solid #fde68a', borderRadius: 10, padding: '10px 12px',
-              display: 'flex', flexDirection: 'column', gap: 6,
-            }}>
+          <div key={cls._id} style={{ background: 'white', border: '1px solid #fde68a', borderRadius: 10, padding: '9px 12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
               <div style={{ fontWeight: 700, fontSize: '0.82rem', color: 'var(--color-text)' }}>{cls.name}</div>
-              <span style={{
-                fontSize: '0.62rem', fontWeight: 800, padding: '2px 7px', borderRadius: 99,
-                background: CATEGORY_COLORS[cls.category] || '#f1f5f9',
-                color: CATEGORY_TEXT[cls.category] || '#475569',
-              }}>
+              <span style={{ fontSize: '0.62rem', fontWeight: 800, padding: '2px 7px', borderRadius: 99, background: CATEGORY_COLORS[cls.category] || '#f1f5f9', color: CATEGORY_TEXT[cls.category] || '#475569' }}>
                 {cls.category}
               </span>
             </div>
-            <div style={{ fontSize: '0.73rem', color: 'var(--color-text-muted)' }}>
-              {cls.teacher?.name || 'No teacher assigned'}
-              {cls.studentCount !== undefined && (
-                <span style={{ marginLeft: 4, color: cls.studentCount === 0 ? '#dc2626' : 'inherit' }}>
-                  · {cls.studentCount === 0 ? 'No students yet' : `${cls.studentCount} students`}
-                </span>
-              )}
+            <div style={{ fontSize: '0.73rem', color: 'var(--color-text-muted)', marginTop: 3 }}>
+              {cls.teacher?.name || 'No teacher'}
             </div>
-            {onSubmitForClass && (
-              <button
-                onClick={() => onSubmitForClass(cls)}
-                style={{
-                  padding: '4px 0', borderRadius: 6, border: '1px solid #fbbf24',
-                  background: '#fef3c7', fontSize: '0.7rem', fontWeight: 700,
-                  cursor: 'pointer', color: '#92400e', fontFamily: 'var(--font-sans)',
-                  textAlign: 'center',
-                }}
-              >
-                Submit Now →
-              </button>
-            )}
           </div>
         ))}
-      </div>
-    </div>
-  );
-}
-
-// ─── Export Attendance Modal ───────────────────────────────────────
-function ExportAttendanceModal({ isOpen, onClose, date, records, classes }) {
-  const [selectedClasses, setSelectedClasses] = useState([]);
-
-  useEffect(() => {
-    if (isOpen) setSelectedClasses((records || []).map(r => r._id));
-  }, [isOpen, records]);
-
-  if (!isOpen) return null;
-
-  const toggleClass = (id) => {
-    setSelectedClasses(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
-  };
-
-  const handlePrint = () => {
-    const selectedRecords = (records || []).filter(r => selectedClasses.includes(r._id));
-
-    const summaryRows = selectedRecords.map(rec => {
-      const present = rec.records?.filter(r => r.status === 'present').length || 0;
-      const absent = rec.records?.filter(r => r.status === 'absent').length || 0;
-      const total = present + absent;
-      const rate = total > 0 ? Math.round((present / total) * 100) : 0;
-      return `<tr>
-        <td>${rec.class?.name || '—'}</td>
-        <td><span style="padding:2px 8px;border-radius:99px;font-size:0.72rem;font-weight:700;background:${
-          rec.class?.category === 'Beginner' ? '#ede9fe' : rec.class?.category === 'Primary' ? '#dbeafe' : rec.class?.category === 'Junior' ? '#dcfce7' : '#fef9c3'
-        };color:${
-          rec.class?.category === 'Beginner' ? '#5b21b6' : rec.class?.category === 'Primary' ? '#1d4ed8' : rec.class?.category === 'Junior' ? '#15803d' : '#92400e'
-        }">${rec.class?.category || '—'}</span></td>
-        <td>${rec.submittedByName || '—'}</td>
-        <td style="color:#15803d;font-weight:700;text-align:center">${present}</td>
-        <td style="color:#b91c1c;font-weight:700;text-align:center">${absent}</td>
-        <td style="text-align:center"><span style="padding:2px 8px;border-radius:99px;font-size:0.75rem;font-weight:800;background:${rate>=80?'#dcfce7':rate>=60?'#fef9c3':'#fee2e2'};color:${rate>=80?'#15803d':rate>=60?'#a16207':'#b91c1c'}">${rate}%</span></td>
-        <td>${rec.isModified ? '<span style="color:#c2410c;font-weight:700">⚠ Modified</span>' : '<span style="color:#15803d">✓ Original</span>'}</td>
-      </tr>`;
-    }).join('');
-
-    const classDetails = selectedRecords.map(rec => {
-      const present = rec.records?.filter(r => r.status === 'present').length || 0;
-      const absent = rec.records?.filter(r => r.status === 'absent').length || 0;
-      const total = present + absent;
-      const rate = total > 0 ? Math.round((present / total) * 100) : 0;
-
-      const studentRows = (rec.records || []).map((r, idx) => `
-        <tr style="background:${idx%2===0?'#f9fafb':'white'}">
-          <td style="text-align:center;color:#888;font-size:0.8rem">${idx + 1}</td>
-          <td style="font-family:monospace;font-size:0.8rem;color:#1a2f5e">${r.student?.studentId || '—'}</td>
-          <td style="font-weight:600">${r.student?.name || '—'}</td>
-          <td style="color:#555;font-size:0.82rem">${r.student?.grade || '—'}</td>
-          <td><span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:700;background:${r.status === 'present' ? '#dcfce7' : '#fee2e2'};color:${r.status === 'present' ? '#15803d' : '#b91c1c'}">${r.status === 'present' ? '✓ Present' : '✗ Absent'}</span></td>
-        </tr>
-      `).join('');
-
-      return `
-        <div style="margin-top:24px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;page-break-inside:avoid">
-          <div style="background:#1a2f5e;color:white;padding:10px 16px;display:flex;justify-content:space-between;align-items:center">
-            <div>
-              <span style="font-weight:800;font-size:1rem">${rec.class?.name || '—'}</span>
-              <span style="font-size:0.75rem;opacity:0.75;margin-left:8px">${rec.class?.category}</span>
-            </div>
-            <div style="display:flex;gap:16px;font-size:0.8rem">
-              <span>Teacher: ${rec.submittedByName || '—'}</span>
-              <span style="color:#86efac;font-weight:700">✓ ${present} Present</span>
-              <span style="color:#fca5a5;font-weight:700">✗ ${absent} Absent</span>
-              <span style="background:#fbbf24;color:#1a1a1a;padding:2px 8px;border-radius:99px;font-weight:800">${rate}%</span>
-            </div>
-          </div>
-          <table style="width:100%;border-collapse:collapse">
-            <thead>
-              <tr style="background:#f4f6fb">
-                <th style="padding:6px 10px;text-align:center;font-size:0.7rem;color:#888;text-transform:uppercase">#</th>
-                <th style="padding:6px 10px;text-align:left;font-size:0.7rem;color:#888;text-transform:uppercase">Student ID</th>
-                <th style="padding:6px 10px;text-align:left;font-size:0.7rem;color:#888;text-transform:uppercase">Name</th>
-                <th style="padding:6px 10px;text-align:left;font-size:0.7rem;color:#888;text-transform:uppercase">Grade</th>
-                <th style="padding:6px 10px;text-align:left;font-size:0.7rem;color:#888;text-transform:uppercase">Status</th>
-              </tr>
-            </thead>
-            <tbody>${studentRows}</tbody>
-          </table>
-        </div>
-      `;
-    }).join('');
-
-    const html = `<!DOCTYPE html><html><head>
-    <meta charset="UTF-8"><title>Attendance Export — ${formatDisplayDate(date)}</title>
-    <style>
-      @page { size: A4; margin: 14mm 12mm; }
-      * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 9.5pt; color: #111; }
-      h1 { font-size: 15pt; font-weight: 800; color: #1a2f5e; }
-      h2 { font-size: 11pt; font-weight: 700; color: #c8922a; margin-top: 2px; }
-      table { width: 100%; border-collapse: collapse; }
-      th { background: #1a2f5e; color: white; padding: 6px 10px; text-align: left; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
-      td { padding: 7px 10px; border-bottom: 1px solid #e8edf2; }
-      .footer { margin-top: 20px; font-size: 7.5pt; color: #888; border-top: 1px solid #ddd; padding-top: 8px; display: flex; justify-content: space-between; }
-      @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
-    </style></head><body>
-    <div style="border-bottom:3px solid #1a2f5e;padding-bottom:10px;margin-bottom:14px; display:flex; align-items:center; gap:10px;">
-      <img src="/poj-logo.png" alt="POJ Logo" style="height:40px; width:auto; object-fit:contain;" />
-      <div>
-        <h1 style="margin:0;">Presence of Jesus Ministry</h1>
-        <h2 style="margin:0;">Student Attendance — ${formatDisplayDate(date)}</h2>
-      </div>
-    </div>
-    <h3 style="font-size:0.82rem;font-weight:700;color:#1a2f5e;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.06em">Summary</h3>
-    <table style="margin-bottom:20px">
-      <thead><tr>
-        <th>Class</th><th>Category</th><th>Submitted By</th>
-        <th style="text-align:center">Present</th><th style="text-align:center">Absent</th>
-        <th style="text-align:center">Rate</th><th>Flag</th>
-      </tr></thead>
-      <tbody>${summaryRows}</tbody>
-    </table>
-    <h3 style="font-size:0.82rem;font-weight:700;color:#1a2f5e;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Class-wise Student Details</h3>
-    ${classDetails}
-    <div class="footer">
-      <span>VBS Management System — Presence of Jesus Ministry</span>
-      <span>Generated: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</span>
-    </div>
-    </body></html>`;
-
-    const w = window.open('', '_blank');
-    if (w) {
-      w.document.write(html);
-      w.document.close();
-      setTimeout(() => { w.focus(); w.print(); }, 600);
-    }
-  };
-
-  const totalPresent = (records || []).filter(r => selectedClasses.includes(r._id)).reduce((s, r) => s + (r.records?.filter(x => x.status === 'present').length || 0), 0);
-  const totalAbsent = (records || []).filter(r => selectedClasses.includes(r._id)).reduce((s, r) => s + (r.records?.filter(x => x.status === 'absent').length || 0), 0);
-
-  return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, zIndex: 1000 }}>
-      <div style={{ background: 'white', borderRadius: 20, width: '100%', maxWidth: 600, maxHeight: '85vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
-        <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, background: 'white', zIndex: 1 }}>
-          <div>
-            <div style={{ fontWeight: 800, fontSize: '1rem' }}>Export Attendance</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', marginTop: 2 }}>{formatDisplayDate(date)}</div>
-          </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)' }}><X size={18} /></button>
-        </div>
-        <div style={{ padding: '18px 22px' }}>
-          <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
-            {[
-              { label: 'Classes', value: selectedClasses.length, color: '#3b82f6' },
-              { label: 'Present', value: totalPresent, color: '#16a34a' },
-              { label: 'Absent', value: totalAbsent, color: '#dc2626' },
-              { label: 'Rate', value: (totalPresent + totalAbsent) > 0 ? `${Math.round((totalPresent / (totalPresent + totalAbsent)) * 100)}%` : '—', color: '#8b5cf6' },
-            ].map(s => (
-              <div key={s.label} style={{ flex: 1, background: 'var(--color-bg)', borderRadius: 10, padding: '10px 12px', textAlign: 'center' }}>
-                <div style={{ fontSize: '1.3rem', fontWeight: 800, color: s.color }}>{s.value}</div>
-                <div style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--color-text-muted)', marginTop: 2 }}>{s.label}</div>
-              </div>
-            ))}
-          </div>
-
-          <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text-secondary)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Select Classes to Export</div>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-            <button onClick={() => setSelectedClasses((records || []).map(r => r._id))}
-              style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'white', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font-sans)' }}>
-              Select All
-            </button>
-            <button onClick={() => setSelectedClasses([])}
-              style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'white', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font-sans)' }}>
-              Clear
-            </button>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto' }}>
-            {(records || []).map(rec => {
-              const isSelected = selectedClasses.includes(rec._id);
-              const present = rec.records?.filter(r => r.status === 'present').length || 0;
-              const absent = rec.records?.filter(r => r.status === 'absent').length || 0;
-              const total = present + absent;
-              const rate = total > 0 ? Math.round((present / total) * 100) : 0;
-              return (
-                <div key={rec._id}
-                  onClick={() => toggleClass(rec._id)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
-                    border: `2px solid ${isSelected ? 'var(--color-primary)' : 'var(--color-border)'}`,
-                    borderRadius: 10, background: isSelected ? 'rgba(26,47,94,0.04)' : 'white',
-                    cursor: 'pointer', transition: 'all 0.15s',
-                  }}>
-                  <div style={{ width: 18, height: 18, borderRadius: 5, border: `2px solid ${isSelected ? 'var(--color-primary)' : 'var(--color-border)'}`, background: isSelected ? 'var(--color-primary)' : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    {isSelected && <Check size={11} color="white" />}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, fontSize: '0.845rem' }}>{rec.class?.name}</div>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', marginTop: 1 }}>{rec.class?.category} · {rec.records?.length || 0} students · by {rec.submittedByName}</div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
-                    <span style={{ color: '#16a34a', fontWeight: 700, fontSize: '0.82rem' }}>{present}✓</span>
-                    <span style={{ color: '#dc2626', fontWeight: 700, fontSize: '0.82rem' }}>{absent}✗</span>
-                    <span style={{ padding: '2px 8px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 800, background: rate >= 80 ? '#dcfce7' : rate >= 60 ? '#fef9c3' : '#fee2e2', color: rate >= 80 ? '#15803d' : rate >= 60 ? '#a16207' : '#b91c1c' }}>{rate}%</span>
-                    {rec.isModified && <span style={{ fontSize: '0.65rem', color: '#c2410c', fontWeight: 700 }}>⚠ Mod</span>}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-        <div style={{ padding: '14px 22px', borderTop: '1px solid var(--color-border)', display: 'flex', gap: 10, justifyContent: 'flex-end', position: 'sticky', bottom: 0, background: 'white' }}>
-          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={selectedClasses.length === 0} onClick={handlePrint}>
-            <Printer size={15} /> Print / Export PDF ({selectedClasses.length} classes)
-          </button>
-        </div>
       </div>
     </div>
   );
@@ -439,7 +333,7 @@ function TeacherMarkAttendance() {
   const submitMutation = useMutation({
     mutationFn: (data) => attendanceAPI.submitStudentAttendance(data),
     onSuccess: () => {
-      toast.success('Attendance submitted successfully!');
+      toast.success('Attendance submitted!');
       qc.invalidateQueries(['attendance-check']);
       qc.invalidateQueries(['teacher-history']);
       setRecords({});
@@ -455,56 +349,67 @@ function TeacherMarkAttendance() {
         <Users size={32} color="var(--color-text-muted)" />
       </div>
       <h3 style={{ fontWeight: 700, marginBottom: 8 }}>No Class Assigned</h3>
-      <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.875rem' }}>
-        Contact your administrator to get a class assigned to your account.
-      </p>
+      <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.875rem' }}>Contact admin to get a class assigned.</p>
     </div>
   );
 
   const students = classData.students || [];
   const alreadySubmitted = !!existingRecord;
   const isToday = date === todayIST;
-  const windowOpen = windowData?.allowed;
+  const windowStopped = windowData?.stopped;
+  const windowOpen = windowData?.allowed && !windowStopped;
   const canSubmit = isToday && windowOpen && !alreadySubmitted;
 
-  const markedCount = Object.keys(records).length;
+  const markedCount  = Object.keys(records).length;
   const presentCount = Object.values(records).filter(v => v === 'present').length;
-  const unmarked = students.length - markedCount;
-
-  const markAll = (status) => {
-    const all = {};
-    students.forEach(s => { all[s._id] = status; });
-    setRecords(all);
-  };
-
-  const handleSubmit = () => {
-    const recs = students.map(s => ({ studentId: s._id, status: records[s._id] || 'absent' }));
-    submitMutation.mutate({ date, classId: classData._id, records: recs });
-  };
+  const unmarked     = students.length - markedCount;
+  const markAll      = (status) => { const all = {}; students.forEach(s => { all[s._id] = status; }); setRecords(all); };
 
   return (
     <div style={{ maxWidth: '100%' }}>
-      <WindowBanner showForTeacher />
+      {/* Window banner for teachers — show stopped state */}
+      {windowStopped && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderRadius: 10, marginBottom: 16, background: '#fff7ed', border: '1px solid #fed7aa' }}>
+          <Ban size={16} color="#ea580c" />
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '0.845rem', color: '#9a3412' }}>Attendance Window Stopped</div>
+            <div style={{ fontSize: '0.78rem', color: '#c2410c', marginTop: 2 }}>{windowData?.message?.replace('⛔ ', '')}</div>
+          </div>
+        </div>
+      )}
+      {!windowStopped && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px',
+          borderRadius: 10, marginBottom: 16,
+          background: windowOpen ? '#f0fdf4' : '#fef2f2',
+          border: `1px solid ${windowOpen ? '#bbf7d0' : '#fecaca'}`,
+        }}>
+          <span style={{ padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 800, background: windowOpen ? '#16a34a' : '#dc2626', color: 'white' }}>
+            {windowOpen ? 'Window OPEN' : 'Window CLOSED'}
+          </span>
+          <span style={{ fontSize: '0.82rem', color: 'var(--color-text-secondary)', flex: 1 }}>{windowData?.message || 'Loading...'}</span>
+          {windowOpen && windowData?.minutesRemaining > 0 && (
+            <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#92400e', background: '#fef3c7', padding: '3px 10px', borderRadius: 99 }}>
+              <Clock size={13} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+              {windowData.minutesRemaining} min
+            </span>
+          )}
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 200px', minWidth: 180 }}>
-          <DateInput
-            label="Attendance Date"
-            value={date}
-            onChange={(v) => { setDate(v); setRecords({}); }}
+          <DateInput label="Attendance Date" value={date} onChange={(v) => { setDate(v); setRecords({}); }}
             max={todayIST}
             vbsStartDate={activeSettings?.dates?.startDate?.slice(0, 10)}
             vbsEndDate={activeSettings?.dates?.endDate?.slice(0, 10)}
-            showVBSDays={true}
-          />
+            showVBSDays={true} />
         </div>
         <div style={{ flex: 2, padding: '8px 14px', background: 'var(--color-bg)', borderRadius: 10, border: '1px solid var(--color-border)', minWidth: 0 }}>
           <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Class</div>
-          <div style={{ fontWeight: 700, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <div style={{ fontWeight: 700, marginTop: 2 }}>
             {classData.name}{' '}
-            <span style={{ fontWeight: 400, color: 'var(--color-text-secondary)', fontSize: '0.82rem' }}>
-              · {classData.category} · {students.length} students
-            </span>
+            <span style={{ fontWeight: 400, color: 'var(--color-text-secondary)', fontSize: '0.82rem' }}>· {classData.category} · {students.length} students</span>
           </div>
         </div>
       </div>
@@ -512,33 +417,27 @@ function TeacherMarkAttendance() {
       {alreadySubmitted && (
         <div className="alert alert-success" style={{ marginBottom: 16 }}>
           <Check size={15} style={{ flexShrink: 0 }} />
-          <div>Attendance already submitted for <strong>{formatDisplayDate(date)}</strong>.</div>
+          <div>Attendance submitted for <strong>{formatDisplayDate(date)}</strong>.</div>
         </div>
       )}
       {!isToday && !alreadySubmitted && !checkingExisting && (
         <div className="alert alert-warning" style={{ marginBottom: 16 }}>
           <AlertCircle size={15} style={{ flexShrink: 0 }} />
-          <div>No record found for <strong>{formatDisplayDate(date)}</strong>. You can only submit for today within the open window.</div>
+          <div>No record for <strong>{formatDisplayDate(date)}</strong>. Submit only for today within the open window.</div>
         </div>
       )}
-      {isToday && !windowOpen && !alreadySubmitted && (
+      {isToday && !windowOpen && !alreadySubmitted && !windowStopped && (
         <div className="alert alert-warning" style={{ marginBottom: 16 }}>
           <Clock size={15} style={{ flexShrink: 0 }} />
-          <div>Attendance window is <strong>closed</strong>. Contact admin for late submissions.</div>
+          <div>Window is <strong>closed</strong>. Contact admin for late submissions.</div>
         </div>
       )}
 
       {canSubmit && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
-          <button className="btn btn-secondary btn-sm" onClick={() => markAll('present')}>
-            <Check size={14} /> All Present
-          </button>
-          <button className="btn btn-secondary btn-sm" onClick={() => markAll('absent')}>
-            <X size={14} /> All Absent
-          </button>
-          <button className="btn btn-ghost btn-sm" onClick={() => setRecords({})}>
-            <RefreshCw size={14} /> Clear
-          </button>
+          <button className="btn btn-secondary btn-sm" onClick={() => markAll('present')}><Check size={14} /> All Present</button>
+          <button className="btn btn-secondary btn-sm" onClick={() => markAll('absent')}><X size={14} /> All Absent</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setRecords({})}><RefreshCw size={14} /> Clear</button>
           {markedCount > 0 && (
             <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.82rem', padding: '4px 12px', background: 'var(--color-bg)', borderRadius: 8, border: '1px solid var(--color-border)' }}>
               <span style={{ color: '#16a34a', fontWeight: 700 }}>✓ {presentCount}</span>
@@ -569,7 +468,6 @@ function TeacherMarkAttendance() {
                   r => r.student?._id?.toString() === s._id?.toString() || r.student?.toString() === s._id?.toString()
                 )?.status;
                 const currentStatus = alreadySubmitted ? submittedStatus : records[s._id];
-
                 return (
                   <tr key={s._id} style={{ background: canSubmit && records[s._id] ? 'rgba(26,47,94,0.02)' : undefined }}>
                     <td style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>{idx + 1}</td>
@@ -587,13 +485,10 @@ function TeacherMarkAttendance() {
                               style={{
                                 padding: '4px 10px', borderRadius: 7, border: 'none', cursor: 'pointer',
                                 fontWeight: 700, fontSize: '0.75rem', transition: 'all 0.12s',
-                                background: currentStatus === st
-                                  ? (st === 'present' ? '#16a34a' : '#dc2626')
-                                  : 'var(--color-bg)',
+                                background: currentStatus === st ? (st === 'present' ? '#16a34a' : '#dc2626') : 'var(--color-bg)',
                                 color: currentStatus === st ? 'white' : 'var(--color-text-secondary)',
                               }}>
                               {st === 'present' ? '✓' : '✗'}
-                              <span className="sm-label"> {st === 'present' ? 'P' : 'A'}</span>
                             </button>
                           ))}
                         </div>
@@ -607,16 +502,15 @@ function TeacherMarkAttendance() {
             </tbody>
           </table>
         </div>
-
         {canSubmit && (
           <div style={{ padding: '12px 16px', borderTop: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
             <div style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>
-              {unmarked > 0
-                ? <span style={{ color: '#d97706' }}>⚠️ {unmarked} unmarked → Absent</span>
-                : <span style={{ color: '#16a34a' }}>✓ All {students.length} marked</span>
-              }
+              {unmarked > 0 ? <span style={{ color: '#d97706' }}>⚠️ {unmarked} unmarked → Absent</span> : <span style={{ color: '#16a34a' }}>✓ All {students.length} marked</span>}
             </div>
-            <button className="btn btn-primary" onClick={handleSubmit} disabled={submitMutation.isPending}>
+            <button className="btn btn-primary" onClick={() => {
+              const recs = students.map(s => ({ studentId: s._id, status: records[s._id] || 'absent' }));
+              submitMutation.mutate({ date, classId: classData._id, records: recs });
+            }} disabled={submitMutation.isPending}>
               {submitMutation.isPending ? <><div className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> Submitting...</> : <><Save size={15} /> Submit</>}
             </button>
           </div>
@@ -626,19 +520,18 @@ function TeacherMarkAttendance() {
   );
 }
 
-// ─── Teacher: Attendance History (submissions) ─────────────────────
+// ─── Teacher History ───────────────────────────────────────────────
 function TeacherAttendanceHistory() {
   const { user } = useAuth();
   const [page, setPage] = useState(1);
   const pageSize = 10;
- 
+
   const { data: classData } = useQuery({
     queryKey: ['my-class-full', user._id],
     queryFn: async () => {
       const { data: tData } = await teachersAPI.getAll();
       const teacher = tData.data?.find(t =>
-        t.user?._id?.toString() === user._id?.toString() ||
-        t.user?.toString() === user._id?.toString()
+        t.user?._id?.toString() === user._id?.toString() || t.user?.toString() === user._id?.toString()
       );
       if (!teacher?.classAssigned?._id && !teacher?.classAssigned) return null;
       const classId = teacher.classAssigned?._id || teacher.classAssigned;
@@ -646,53 +539,46 @@ function TeacherAttendanceHistory() {
       return clsData.data;
     },
   });
- 
+
   const { data: history, isLoading } = useQuery({
     queryKey: ['teacher-history', classData?._id],
     queryFn: () => attendanceAPI.getStudentAttendance({ classId: classData._id }).then(r => r.data?.data || []),
     enabled: !!classData?._id,
   });
- 
+
   if (isLoading) return <div className="loading-center"><div className="spinner" /></div>;
- 
-  const sortedAsc = [...(history || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const sortedAsc  = [...(history || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
   const totalRecords = sortedAsc.length;
- 
   const dayNumberMap = {};
-  sortedAsc.forEach((rec, idx) => {
-    dayNumberMap[rec._id] = idx + 1;
-  });
- 
+  sortedAsc.forEach((rec, idx) => { dayNumberMap[rec._id] = idx + 1; });
   const sortedDesc = [...sortedAsc].reverse();
   const totalPages = Math.ceil(sortedDesc.length / pageSize);
   const paged = sortedDesc.slice((page - 1) * pageSize, page * pageSize);
- 
+
   if (totalRecords === 0) return (
     <div className="card" style={{ textAlign: 'center', padding: 48 }}>
       <Calendar size={36} style={{ color: 'var(--color-text-muted)', marginBottom: 12 }} />
       <h3>No attendance records yet</h3>
-      <p style={{ color: 'var(--color-text-secondary)', marginTop: 6 }}>Records appear after you submit attendance.</p>
     </div>
   );
- 
+
   return (
     <div>
       <div style={{ marginBottom: 14, fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
-        {totalRecords} submission records for {classData?.name}
+        {totalRecords} records for {classData?.name}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {paged.map(rec => {
           const present = rec.records?.filter(r => r.status === 'present').length || 0;
-          const absent = rec.records?.filter(r => r.status === 'absent').length || 0;
-          const total = present + absent;
-          const rate = total > 0 ? Math.round((present / total) * 100) : 0;
-          const dayNum = dayNumberMap[rec._id];
+          const absent  = rec.records?.filter(r => r.status === 'absent').length || 0;
+          const total   = present + absent;
+          const rate    = total > 0 ? Math.round((present / total) * 100) : 0;
           return (
             <div key={rec._id} className="card" style={{ padding: '14px 16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                    <span className="badge badge-navy">Day {dayNum}</span>
+                    <span className="badge badge-navy">Day {dayNumberMap[rec._id]}</span>
                     <span style={{ fontWeight: 700, fontSize: '0.875rem' }}>{formatDisplayDate(rec.date)}</span>
                   </div>
                   <div style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}>
@@ -728,14 +614,15 @@ function TeacherAttendanceHistory() {
   );
 }
 
-// ─── Staff Attendance Panel ────────────────────────────────────────
+// ─── Staff Attendance Panel ─── Clean Table Design ─────────────────
 function StaffAttendancePanel({ type }) {
   const qc = useQueryClient();
   const [date, setDate] = useState(getTodayIST());
   const [statuses, setStatuses] = useState({});
   const [times, setTimes] = useState({});
   const [remarks, setRemarks] = useState({});
-  const todayIST = getTodayIST();
+  const [expandedId, setExpandedId] = useState(null);
+  const todayIST  = getTodayIST();
   const isTeacher = type === 'teacher';
 
   const { data: activeSettings } = useQuery({
@@ -758,7 +645,9 @@ function StaffAttendancePanel({ type }) {
     select: data => {
       const map = {};
       data.forEach(rec => {
-        const id = isTeacher ? rec.teacher?._id?.toString() || rec.teacher?.toString() : rec.volunteer?._id?.toString() || rec.volunteer?.toString();
+        const id = isTeacher
+          ? rec.teacher?._id?.toString() || rec.teacher?.toString()
+          : rec.volunteer?._id?.toString() || rec.volunteer?.toString();
         if (id) map[id] = rec;
       });
       return map;
@@ -771,6 +660,7 @@ function StaffAttendancePanel({ type }) {
       Object.entries(existingRecords).forEach(([id, rec]) => { newStatuses[id] = rec.status; });
       setStatuses(newStatuses);
     } else { setStatuses({}); }
+    setExpandedId(null);
   }, [existingRecords, date]);
 
   const submitMutation = useMutation({
@@ -786,28 +676,33 @@ function StaffAttendancePanel({ type }) {
   });
 
   const TEACHER_OPTIONS = [
-    { val: 'present', label: 'Present', short: 'P', color: '#16a34a', bg: '#dcfce7' },
-    { val: 'absent', label: 'Absent', short: 'A', color: '#dc2626', bg: '#fee2e2' },
-    { val: 'late', label: 'Late', short: 'L', color: '#d97706', bg: '#fef9c3' },
-    { val: 'leave', label: 'Leave', short: 'Le', color: '#7c3aed', bg: '#ede9fe' },
+    { val: 'present', label: 'Present', short: 'P', color: '#16a34a', bg: '#dcfce7', border: '#86efac' },
+    { val: 'absent',  label: 'Absent',  short: 'A', color: '#dc2626', bg: '#fee2e2', border: '#fca5a5' },
+    { val: 'late',    label: 'Late',    short: 'L', color: '#d97706', bg: '#fef9c3', border: '#fde68a' },
+    { val: 'leave',   label: 'Leave',   short: 'Lv', color: '#7c3aed', bg: '#ede9fe', border: '#c4b5fd' },
   ];
   const VOLUNTEER_OPTIONS = [
-    { val: 'present', label: 'Present', short: 'P', color: '#16a34a', bg: '#dcfce7' },
-    { val: 'absent', label: 'Absent', short: 'A', color: '#dc2626', bg: '#fee2e2' },
-    { val: 'halfDay', label: 'Half Day', short: '½', color: '#c2410c', bg: '#ffedd5' },
-    { val: 'late', label: 'Late', short: 'L', color: '#d97706', bg: '#fef9c3' },
+    { val: 'present', label: 'Present',  short: 'P',  color: '#16a34a', bg: '#dcfce7', border: '#86efac' },
+    { val: 'absent',  label: 'Absent',   short: 'A',  color: '#dc2626', bg: '#fee2e2', border: '#fca5a5' },
+    { val: 'halfDay', label: 'Half Day', short: '½',  color: '#c2410c', bg: '#ffedd5', border: '#fdba74' },
+    { val: 'late',    label: 'Late',     short: 'L',  color: '#d97706', bg: '#fef9c3', border: '#fde68a' },
   ];
   const OPTIONS = isTeacher ? TEACHER_OPTIONS : VOLUNTEER_OPTIONS;
-  const markAll = (status) => { const all = {}; (entities || []).forEach(e => { all[e._id] = status; }); setStatuses(all); };
+
+  const markAll = (status) => {
+    const all = {};
+    (entities || []).forEach(e => { all[e._id] = status; });
+    setStatuses(all);
+  };
 
   const handleSubmit = () => {
     const recs = (entities || []).filter(e => statuses[e._id]).map(e => ({
       [isTeacher ? 'teacherId' : 'volunteerId']: e._id,
       status: statuses[e._id],
-      ...(isTeacher && times[e._id]?.arrival ? { arrivalTime: times[e._id].arrival } : {}),
-      ...(isTeacher && times[e._id]?.departure ? { departureTime: times[e._id].departure } : {}),
-      ...(!isTeacher && times[e._id]?.checkIn ? { checkInTime: times[e._id].checkIn } : {}),
-      ...(!isTeacher && times[e._id]?.checkOut ? { checkOutTime: times[e._id].checkOut } : {}),
+      ...(isTeacher && times[e._id]?.arrival   ? { arrivalTime:   times[e._id].arrival }   : {}),
+      ...(isTeacher && times[e._id]?.departure  ? { departureTime: times[e._id].departure }  : {}),
+      ...(!isTeacher && times[e._id]?.checkIn   ? { checkInTime:   times[e._id].checkIn }    : {}),
+      ...(!isTeacher && times[e._id]?.checkOut  ? { checkOutTime:  times[e._id].checkOut }   : {}),
       ...(remarks[e._id] ? { remarks: remarks[e._id] } : {}),
     }));
     if (!recs.length) { toast.error('Mark at least one person'); return; }
@@ -816,109 +711,209 @@ function StaffAttendancePanel({ type }) {
 
   if (isLoading) return <div className="loading-center"><div className="spinner" /></div>;
 
-  const entityList = entities || [];
-  const markedCount = Object.keys(statuses).length;
+  const entityList   = entities || [];
+  const markedCount  = Object.keys(statuses).length;
   const presentCount = Object.values(statuses).filter(s => ['present', 'halfDay'].includes(s)).length;
+  const absentCount  = Object.values(statuses).filter(s => s === 'absent').length;
+  const lateCount    = Object.values(statuses).filter(s => s === 'late').length;
 
   return (
     <div>
+      {/* Controls row */}
       <div style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 180px', minWidth: 180 }}>
-          <DateInput
-            label="Date"
-            value={date}
-            onChange={setDate}
-            max={todayIST}
+          <DateInput label="Date" value={date} onChange={setDate} max={todayIST}
             vbsStartDate={activeSettings?.dates?.startDate?.slice(0, 10)}
             vbsEndDate={activeSettings?.dates?.endDate?.slice(0, 10)}
-            showVBSDays={true}
-          />
+            showVBSDays={true} />
         </div>
         <div style={{ display: 'flex', gap: 8, paddingBottom: 1, flexWrap: 'wrap' }}>
           <button className="btn btn-secondary btn-sm" onClick={() => markAll('present')}><Check size={14} /> All Present</button>
-          <button className="btn btn-secondary btn-sm" onClick={() => setStatuses({})}><RefreshCw size={14} /> Clear</button>
+          <button className="btn btn-secondary btn-sm" onClick={() => markAll('absent')}><X size={14} /> All Absent</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setStatuses({})}><RefreshCw size={14} /> Clear</button>
         </div>
         <button className="btn btn-primary btn-sm" onClick={handleSubmit} disabled={submitMutation.isPending} style={{ marginLeft: 'auto', marginBottom: 1 }}>
           {submitMutation.isPending ? <><div className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> Saving...</> : <><Save size={14} /> Save</>}
         </button>
       </div>
 
+      {/* Summary strip */}
       {markedCount > 0 && (
-        <div style={{ display: 'flex', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-          <span className="badge badge-green">{presentCount} Present</span>
-          <span className="badge badge-red">{Object.values(statuses).filter(s => s === 'absent').length} Absent</span>
-          <span className="badge badge-gray">{entityList.length - markedCount} Unmarked</span>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+          {[
+            { label: 'Present', count: presentCount, color: '#15803d', bg: '#dcfce7' },
+            { label: 'Absent',  count: absentCount,  color: '#b91c1c', bg: '#fee2e2' },
+            { label: 'Late',    count: lateCount,     color: '#a16207', bg: '#fef9c3' },
+            { label: 'Unmarked', count: entityList.length - markedCount, color: '#475569', bg: '#f1f5f9' },
+          ].filter(s => s.count > 0).map(s => (
+            <div key={s.label} style={{ padding: '5px 12px', borderRadius: 8, background: s.bg, fontSize: '0.78rem', fontWeight: 700, color: s.color }}>
+              {s.count} {s.label}
+            </div>
+          ))}
         </div>
       )}
 
-      <div className="staff-att-grid">
-        {entityList.map(e => {
-          const existing = existingRecords?.[e._id];
-          const currentStatus = statuses[e._id];
-          return (
-            <div key={e._id} className="card" style={{ padding: '12px 14px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: '0.875rem' }}>{e.name}</div>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', marginTop: 2 }}>
-                    {isTeacher ? (e.classAssigned?.name || 'Unassigned') : e.role}
-                    {!isTeacher && e.shift ? ` · ${e.shift}` : ''}
-                  </div>
-                </div>
-                {existing && <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>Saved</span>}
-              </div>
-              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 8 }}>
-                {OPTIONS.map(opt => (
-                  <button key={opt.val} onClick={() => setStatuses(s => ({ ...s, [e._id]: opt.val }))}
-                    style={{
-                      padding: '5px 10px', borderRadius: 7, border: 'none', cursor: 'pointer',
-                      fontSize: '0.75rem', fontWeight: 700, transition: 'all 0.12s',
-                      background: currentStatus === opt.val ? opt.color : 'var(--color-bg)',
-                      color: currentStatus === opt.val ? 'white' : 'var(--color-text-secondary)',
-                    }}>
-                    {opt.short} {opt.label}
-                  </button>
-                ))}
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                {isTeacher && <>
-                  <div>
-                    <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', fontWeight: 600, marginBottom: 2 }}>ARRIVAL</div>
-                    <input type="time" value={times[e._id]?.arrival || ''}
-                      onChange={e2 => setTimes(t => ({ ...t, [e._id]: { ...t[e._id], arrival: e2.target.value } }))}
-                      style={{ width: '100%', border: '1.5px solid var(--color-border)', borderRadius: 7, padding: '5px 8px', fontSize: '0.8rem', fontFamily: 'var(--font-sans)' }} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', fontWeight: 600, marginBottom: 2 }}>DEPARTURE</div>
-                    <input type="time" value={times[e._id]?.departure || ''}
-                      onChange={e2 => setTimes(t => ({ ...t, [e._id]: { ...t[e._id], departure: e2.target.value } }))}
-                      style={{ width: '100%', border: '1.5px solid var(--color-border)', borderRadius: 7, padding: '5px 8px', fontSize: '0.8rem', fontFamily: 'var(--font-sans)' }} />
-                  </div>
-                </>}
-                {!isTeacher && <>
-                  <div>
-                    <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', fontWeight: 600, marginBottom: 2 }}>CHECK-IN</div>
-                    <input type="time" value={times[e._id]?.checkIn || ''}
-                      onChange={e2 => setTimes(t => ({ ...t, [e._id]: { ...t[e._id], checkIn: e2.target.value } }))}
-                      style={{ width: '100%', border: '1.5px solid var(--color-border)', borderRadius: 7, padding: '5px 8px', fontSize: '0.8rem', fontFamily: 'var(--font-sans)' }} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', fontWeight: 600, marginBottom: 2 }}>CHECK-OUT</div>
-                    <input type="time" value={times[e._id]?.checkOut || ''}
-                      onChange={e2 => setTimes(t => ({ ...t, [e._id]: { ...t[e._id], checkOut: e2.target.value } }))}
-                      style={{ width: '100%', border: '1.5px solid var(--color-border)', borderRadius: 7, padding: '5px 8px', fontSize: '0.8rem', fontFamily: 'var(--font-sans)' }} />
-                  </div>
-                </>}
-              </div>
-              <div style={{ marginTop: 6 }}>
-                <input value={remarks[e._id] || ''} placeholder="Remarks (optional)..."
-                  onChange={e2 => setRemarks(r => ({ ...r, [e._id]: e2.target.value }))}
-                  style={{ width: '100%', border: '1.5px solid var(--color-border)', borderRadius: 7, padding: '5px 8px', fontSize: '0.78rem', fontFamily: 'var(--font-sans)' }} />
-              </div>
-            </div>
-          );
-        })}
+      {/* Clean table */}
+      <div style={{ border: '1px solid var(--color-border)', borderRadius: 12, overflow: 'hidden' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ background: 'var(--color-bg)' }}>
+              <th style={{ padding: '10px 16px', textAlign: 'left', fontSize: '0.7rem', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', borderBottom: '2px solid var(--color-border)' }}>
+                {isTeacher ? 'Teacher' : 'Volunteer'}
+              </th>
+              <th style={{ padding: '10px 12px', textAlign: 'left', fontSize: '0.7rem', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', borderBottom: '2px solid var(--color-border)' }}>
+                {isTeacher ? 'Class' : 'Role'}
+              </th>
+              <th style={{ padding: '10px 12px', textAlign: 'left', fontSize: '0.7rem', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', borderBottom: '2px solid var(--color-border)' }}>
+                Status
+              </th>
+              <th style={{ padding: '10px 12px', textAlign: 'right', fontSize: '0.7rem', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', borderBottom: '2px solid var(--color-border)' }}>
+                Details
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {entityList.map((e, idx) => {
+              const existing      = existingRecords?.[e._id];
+              const currentStatus = statuses[e._id];
+              const isExpanded    = expandedId === e._id;
+              const statusOpt     = OPTIONS.find(o => o.val === currentStatus);
+
+              return (
+                <React.Fragment key={e._id}>
+                  <tr style={{
+                    borderTop: idx === 0 ? 'none' : '1px solid var(--color-border-light)',
+                    background: isExpanded ? '#fafbff' : 'white',
+                    transition: 'background 0.15s',
+                  }}>
+                    {/* Name */}
+                    <td style={{ padding: '12px 16px', verticalAlign: 'middle' }}>
+                      <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>{e.name}</div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+                        {e.contactNumber}
+                        {existing && <span style={{ marginLeft: 6, color: '#16a34a', fontWeight: 700 }}>· Saved</span>}
+                      </div>
+                    </td>
+
+                    {/* Class / Role */}
+                    <td style={{ padding: '12px', verticalAlign: 'middle' }}>
+                      <span style={{ fontSize: '0.82rem', color: 'var(--color-text-secondary)' }}>
+                        {isTeacher
+                          ? (e.classAssigned?.name || <span style={{ color: 'var(--color-text-muted)' }}>Unassigned</span>)
+                          : e.role}
+                      </span>
+                      {!isTeacher && e.shift && (
+                        <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 2 }}>{e.shift}</div>
+                      )}
+                    </td>
+
+                    {/* Status buttons */}
+                    <td style={{ padding: '8px 12px', verticalAlign: 'middle' }}>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {OPTIONS.map(opt => (
+                          <button key={opt.val}
+                            onClick={() => setStatuses(s => ({ ...s, [e._id]: opt.val }))}
+                            style={{
+                              padding: '4px 10px', borderRadius: 7, cursor: 'pointer',
+                              fontSize: '0.72rem', fontWeight: 700, transition: 'all 0.12s',
+                              border: `1.5px solid ${currentStatus === opt.val ? opt.border : 'var(--color-border)'}`,
+                              background: currentStatus === opt.val ? opt.bg : 'white',
+                              color: currentStatus === opt.val ? opt.color : 'var(--color-text-muted)',
+                            }}>
+                            {opt.short} {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </td>
+
+                    {/* Expand toggle */}
+                    <td style={{ padding: '8px 16px', verticalAlign: 'middle', textAlign: 'right' }}>
+                      <button
+                        onClick={() => setExpandedId(isExpanded ? null : e._id)}
+                        style={{
+                          padding: '5px 10px', borderRadius: 7, border: '1.5px solid var(--color-border)',
+                          background: isExpanded ? 'var(--color-bg)' : 'white',
+                          cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600,
+                          color: 'var(--color-text-secondary)', display: 'flex', alignItems: 'center', gap: 5,
+                          fontFamily: 'var(--font-sans)',
+                        }}>
+                        {isExpanded ? <ChevronLeft size={12} /> : '+ Times / Remarks'}
+                      </button>
+                    </td>
+                  </tr>
+
+                  {/* Expanded row: times + remarks */}
+                  {isExpanded && (
+                    <tr style={{ borderTop: '1px dashed var(--color-border)', background: '#f8fafd' }}>
+                      <td colSpan={4} style={{ padding: '12px 16px 14px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10 }}>
+                          {isTeacher ? (
+                            <>
+                              <div>
+                                <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--color-text-muted)', marginBottom: 5 }}>Arrival Time</label>
+                                <input type="time" value={times[e._id]?.arrival || ''}
+                                  onChange={e2 => setTimes(t => ({ ...t, [e._id]: { ...t[e._id], arrival: e2.target.value } }))}
+                                  style={{ width: '100%', border: '1.5px solid var(--color-border)', borderRadius: 7, padding: '6px 10px', fontSize: '0.82rem', fontFamily: 'var(--font-sans)', outline: 'none' }} />
+                              </div>
+                              <div>
+                                <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--color-text-muted)', marginBottom: 5 }}>Departure Time</label>
+                                <input type="time" value={times[e._id]?.departure || ''}
+                                  onChange={e2 => setTimes(t => ({ ...t, [e._id]: { ...t[e._id], departure: e2.target.value } }))}
+                                  style={{ width: '100%', border: '1.5px solid var(--color-border)', borderRadius: 7, padding: '6px 10px', fontSize: '0.82rem', fontFamily: 'var(--font-sans)', outline: 'none' }} />
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div>
+                                <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--color-text-muted)', marginBottom: 5 }}>Check-In</label>
+                                <input type="time" value={times[e._id]?.checkIn || ''}
+                                  onChange={e2 => setTimes(t => ({ ...t, [e._id]: { ...t[e._id], checkIn: e2.target.value } }))}
+                                  style={{ width: '100%', border: '1.5px solid var(--color-border)', borderRadius: 7, padding: '6px 10px', fontSize: '0.82rem', fontFamily: 'var(--font-sans)', outline: 'none' }} />
+                              </div>
+                              <div>
+                                <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--color-text-muted)', marginBottom: 5 }}>Check-Out</label>
+                                <input type="time" value={times[e._id]?.checkOut || ''}
+                                  onChange={e2 => setTimes(t => ({ ...t, [e._id]: { ...t[e._id], checkOut: e2.target.value } }))}
+                                  style={{ width: '100%', border: '1.5px solid var(--color-border)', borderRadius: 7, padding: '6px 10px', fontSize: '0.82rem', fontFamily: 'var(--font-sans)', outline: 'none' }} />
+                              </div>
+                            </>
+                          )}
+                          <div style={{ gridColumn: 'span 2' }}>
+                            <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--color-text-muted)', marginBottom: 5 }}>Remarks</label>
+                            <input value={remarks[e._id] || ''} placeholder="Optional note..."
+                              onChange={e2 => setRemarks(r => ({ ...r, [e._id]: e2.target.value }))}
+                              style={{ width: '100%', border: '1.5px solid var(--color-border)', borderRadius: 7, padding: '6px 10px', fontSize: '0.82rem', fontFamily: 'var(--font-sans)', outline: 'none' }} />
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+
+        {entityList.length === 0 && (
+          <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>
+            No active {isTeacher ? 'teachers' : 'volunteers'} found.
+          </div>
+        )}
       </div>
+
+      {/* Save footer */}
+      {entityList.length > 0 && (
+        <div style={{ marginTop: 14, display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+          <button className="btn btn-secondary" onClick={() => setStatuses({})}>
+            <RefreshCw size={14} /> Reset
+          </button>
+          <button className="btn btn-primary" onClick={handleSubmit} disabled={submitMutation.isPending}>
+            {submitMutation.isPending
+              ? <><div className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> Saving...</>
+              : <><Save size={14} /> Save {markedCount > 0 ? `(${markedCount})` : 'All'}</>}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -957,13 +952,13 @@ function AdminStudentAttendance() {
     onError: (err) => toast.error(err.response?.data?.message || 'Failed'),
   });
 
-  const pageSize = 20;
+  const pageSize  = 20;
   const allRecords = records || [];
-  const paged = allRecords.slice((page - 1) * pageSize, page * pageSize);
-  const pages = Math.ceil(allRecords.length / pageSize);
+  const paged     = allRecords.slice((page - 1) * pageSize, page * pageSize);
+  const pages     = Math.ceil(allRecords.length / pageSize);
   const totalPresent = allRecords.reduce((sum, r) => sum + (r.records?.filter(x => x.status === 'present').length || 0), 0);
-  const totalAbsent = allRecords.reduce((sum, r) => sum + (r.records?.filter(x => x.status === 'absent').length || 0), 0);
-  const overallRate = (totalPresent + totalAbsent) > 0 ? Math.round((totalPresent / (totalPresent + totalAbsent)) * 100) : 0;
+  const totalAbsent  = allRecords.reduce((sum, r) => sum + (r.records?.filter(x => x.status === 'absent').length || 0), 0);
+  const overallRate  = (totalPresent + totalAbsent) > 0 ? Math.round((totalPresent / (totalPresent + totalAbsent)) * 100) : 0;
 
   const classesWithCounts = (allClasses || []).map(cls => ({
     ...cls,
@@ -974,14 +969,10 @@ function AdminStudentAttendance() {
     <div>
       <div style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 180px', minWidth: 180 }}>
-          <DateInput
-            label="Date"
-            value={dateFilter}
-            onChange={(v) => { setDateFilter(v); setPage(1); }}
+          <DateInput label="Date" value={dateFilter} onChange={(v) => { setDateFilter(v); setPage(1); }}
             vbsStartDate={activeSettings?.dates?.startDate?.slice(0, 10)}
             vbsEndDate={activeSettings?.dates?.endDate?.slice(0, 10)}
-            showVBSDays={true}
-          />
+            showVBSDays={true} />
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', paddingBottom: 1 }}>
           <button className="btn btn-secondary btn-sm" onClick={() => refetch()}>
@@ -995,21 +986,15 @@ function AdminStudentAttendance() {
         </div>
       </div>
 
-      <PendingClassesPanel
-        date={dateFilter}
-        vbsYear={vbsYear}
-        classes={classesWithCounts}
-        submittedRecords={allRecords}
-        onSubmitForClass={null}
-      />
+      <PendingClassesPanel date={dateFilter} vbsYear={vbsYear} classes={classesWithCounts} submittedRecords={allRecords} />
 
       {allRecords.length > 0 && (
         <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
           {[
-            { label: 'Classes', value: allRecords.length, color: '#3b82f6' },
-            { label: 'Present', value: totalPresent, color: '#16a34a' },
-            { label: 'Absent', value: totalAbsent, color: '#dc2626' },
-            { label: 'Rate', value: `${overallRate}%`, color: overallRate >= 80 ? '#16a34a' : overallRate >= 60 ? '#d97706' : '#dc2626' },
+            { label: 'Classes',  value: allRecords.length, color: '#3b82f6' },
+            { label: 'Present',  value: totalPresent, color: '#16a34a' },
+            { label: 'Absent',   value: totalAbsent, color: '#dc2626' },
+            { label: 'Rate',     value: `${overallRate}%`, color: overallRate >= 80 ? '#16a34a' : overallRate >= 60 ? '#d97706' : '#dc2626' },
           ].map(s => (
             <div key={s.label} className="stat-card" style={{ padding: '12px 18px', flex: '0 0 auto' }}>
               <div className="stat-label">{s.label}</div>
@@ -1047,9 +1032,9 @@ function AdminStudentAttendance() {
                   <tbody>
                     {paged.map(rec => {
                       const present = rec.records?.filter(r => r.status === 'present').length || 0;
-                      const absent = rec.records?.filter(r => r.status === 'absent').length || 0;
-                      const total = present + absent;
-                      const rate = total > 0 ? Math.round((present / total) * 100) : 0;
+                      const absent  = rec.records?.filter(r => r.status === 'absent').length || 0;
+                      const total   = present + absent;
+                      const rate    = total > 0 ? Math.round((present / total) * 100) : 0;
                       return (
                         <tr key={rec._id}>
                           <td style={{ fontWeight: 600 }}>{rec.class?.name}</td>
@@ -1058,14 +1043,10 @@ function AdminStudentAttendance() {
                           <td style={{ textAlign: 'center' }}><span style={{ color: '#16a34a', fontWeight: 700 }}>{present}</span></td>
                           <td style={{ textAlign: 'center' }}><span style={{ color: '#dc2626', fontWeight: 700 }}>{absent}</span></td>
                           <td><RateBar rate={rate} /></td>
-                          <td>
-                            {rec.isModified ? <span className="badge badge-orange">Modified</span> : <span className="badge badge-green">Original</span>}
-                          </td>
+                          <td>{rec.isModified ? <span className="badge badge-orange">Modified</span> : <span className="badge badge-green">Original</span>}</td>
                           <td>
                             <div style={{ display: 'flex', gap: 4 }}>
-                              {user.role === 'admin' && (
-                                <button className="btn btn-secondary btn-icon btn-sm" onClick={() => setModifyRecord(rec)}><Edit2 size={13} /></button>
-                              )}
+                              {user.role === 'admin' && <button className="btn btn-secondary btn-icon btn-sm" onClick={() => setModifyRecord(rec)}><Edit2 size={13} /></button>}
                               <button className="btn btn-secondary btn-icon btn-sm" onClick={() => setHistoryRecord(rec)}><History size={13} /></button>
                               {user.role === 'admin' && (
                                 <button className="btn btn-ghost btn-icon btn-sm" style={{ color: 'var(--color-danger)' }}
@@ -1097,18 +1078,8 @@ function AdminStudentAttendance() {
           )}
         </div>
       )}
-
-      {modifyRecord && <ModifyModal record={modifyRecord} onClose={() => setModifyRecord(null)} />}
+      {modifyRecord  && <ModifyModal  record={modifyRecord}  onClose={() => setModifyRecord(null)} />}
       {historyRecord && <HistoryModal record={historyRecord} onClose={() => setHistoryRecord(null)} />}
-      {showExport && (
-        <ExportAttendanceModal
-          isOpen={showExport}
-          onClose={() => setShowExport(false)}
-          date={dateFilter}
-          records={allRecords}
-          classes={allClasses || []}
-        />
-      )}
     </div>
   );
 }
@@ -1120,23 +1091,16 @@ function ModifyModal({ record, onClose }) {
   const [reason, setReason] = useState('');
   const modifyMutation = useMutation({
     mutationFn: (data) => attendanceAPI.modifyStudentAttendance(record._id, data),
-    onSuccess: () => {
-      toast.success('Attendance modified — audit trail saved');
-      qc.invalidateQueries(['admin-student-attendance']);
-      onClose();
-    },
-    onError: (err) => toast.error(err.response?.data?.message || 'Modification failed'),
+    onSuccess: () => { toast.success('Attendance modified — audit saved'); qc.invalidateQueries(['admin-student-attendance']); onClose(); },
+    onError: (err) => toast.error(err.response?.data?.message || 'Failed'),
   });
-  const changedCount = Object.keys(changes).length;
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <div>
             <span style={{ fontWeight: 700 }}>Edit Attendance — {record.class?.name}</span>
-            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', marginTop: 2 }}>
-              {formatDisplayDate(record.date)} · By {record.submittedByName}
-            </div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', marginTop: 2 }}>{formatDisplayDate(record.date)} · By {record.submittedByName}</div>
           </div>
           <button className="btn btn-ghost btn-icon" onClick={onClose}><X size={18} /></button>
         </div>
@@ -1187,12 +1151,12 @@ function ModifyModal({ record, onClose }) {
         </div>
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={changedCount === 0 || modifyMutation.isPending}
+          <button className="btn btn-primary" disabled={Object.keys(changes).length === 0 || modifyMutation.isPending}
             onClick={() => modifyMutation.mutate({
               changes: Object.entries(changes).map(([studentId, newStatus]) => ({ studentId, newStatus })),
               reason
             })}>
-            <Save size={15} /> Save {changedCount > 0 ? `${changedCount} Change${changedCount > 1 ? 's' : ''}` : ''}
+            <Save size={15} /> Save {Object.keys(changes).length > 0 ? `${Object.keys(changes).length} Change(s)` : ''}
           </button>
         </div>
       </div>
@@ -1209,9 +1173,7 @@ function HistoryModal({ record, onClose }) {
         <div className="modal-header">
           <div>
             <span style={{ fontWeight: 700 }}>Modification History</span>
-            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', marginTop: 2 }}>
-              {record.class?.name} — {formatDisplayDate(record.date)}
-            </div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', marginTop: 2 }}>{record.class?.name} — {formatDisplayDate(record.date)}</div>
           </div>
           <button className="btn btn-ghost btn-icon" onClick={onClose}><X size={18} /></button>
         </div>
@@ -1311,7 +1273,7 @@ function AdminSubmitOnBehalf() {
   const alreadySubmitted = !!existingRecord;
   const markAll = (status) => { const all = {}; students.forEach(s => { all[s._id] = status; }); setRecords(all); };
   const presentCount = Object.values(records).filter(v => v === 'present').length;
-  const markedCount = Object.keys(records).length;
+  const markedCount  = Object.keys(records).length;
 
   return (
     <div>
@@ -1321,19 +1283,14 @@ function AdminSubmitOnBehalf() {
       </div>
       <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 180px', minWidth: 180 }}>
-          <DateInput
-            label="Date"
-            value={date}
-            onChange={(v) => { setDate(v); setRecords({}); }}
+          <DateInput label="Date" value={date} onChange={(v) => { setDate(v); setRecords({}); }}
             vbsStartDate={activeSettings?.dates?.startDate?.slice(0, 10)}
             vbsEndDate={activeSettings?.dates?.endDate?.slice(0, 10)}
-            showVBSDays={true}
-          />
+            showVBSDays={true} />
         </div>
         <div style={{ flex: '1 1 200px', minWidth: 180 }}>
           <label className="form-label">Class</label>
-          <select className="form-select" value={selectedClassId}
-            onChange={e => { setSelectedClassId(e.target.value); setRecords({}); }}>
+          <select className="form-select" value={selectedClassId} onChange={e => { setSelectedClassId(e.target.value); setRecords({}); }}>
             <option value="">Select a class...</option>
             {(classes || []).map(c => <option key={c._id} value={c._id}>{c.name} ({c.category})</option>)}
           </select>
@@ -1422,23 +1379,29 @@ function AdminSubmitOnBehalf() {
 export default function AttendancePage({ initialTab }) {
   const { user } = useAuth();
 
+  // Fetch active settings for window stop/resume control
+  const { data: activeSettings } = useQuery({
+    queryKey: ['active-settings'],
+    queryFn: () => settingsAPI.getActive().then(r => r.data?.data),
+  });
+
   const tabsByRole = {
     admin: [
-      { id: 'manage', label: '📋 Student Records' },
+      { id: 'manage',       label: '📋 Student Records' },
       { id: 'submit-behalf', label: '✏️ Submit (Admin)' },
-      { id: 'teachers', label: '👩‍🏫 Teacher Attendance' },
-      { id: 'volunteers', label: '🤝 Volunteer Attendance' },
+      { id: 'teachers',     label: '👩‍🏫 Teacher Attendance' },
+      { id: 'volunteers',   label: '🤝 Volunteer Attendance' },
     ],
     editor: [
-      { id: 'teachers', label: '👩‍🏫 Teacher Attendance' },
+      { id: 'teachers',   label: '👩‍🏫 Teacher Attendance' },
       { id: 'volunteers', label: '🤝 Volunteer Attendance' },
     ],
     viewer: [
       { id: 'manage', label: '📋 Student Records' },
     ],
     teacher: [
-      { id: 'submit', label: '✏️ Mark Attendance' },
-      { id: 'history', label: '📅 Submission History' },
+      { id: 'submit',       label: '✏️ Mark Attendance' },
+      { id: 'history',      label: '📅 Submission History' },
       { id: 'my-attendance', label: '👤 My Attendance' },
     ],
   };
@@ -1462,11 +1425,19 @@ export default function AttendancePage({ initialTab }) {
         </div>
       </div>
 
-      {/* Mobile-friendly scrollable tab bar */}
+      {/* Window Banner — always visible for admin on relevant tabs */}
+      {['admin', 'teacher'].includes(user.role) && (
+        <WindowBanner
+          user={user}
+          activeSettingsId={activeSettings?._id}
+          activeSettings={activeSettings}
+        />
+      )}
+
+      {/* Tab bar */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 20, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
         {tabs.map(tab => (
-          <button key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
             style={{
               padding: '8px 14px', borderRadius: 10,
               border: `1.5px solid ${activeTab === tab.id ? 'var(--color-primary)' : 'var(--color-border)'}`,
@@ -1480,26 +1451,13 @@ export default function AttendancePage({ initialTab }) {
         ))}
       </div>
 
-      {activeTab === 'submit' && <TeacherMarkAttendance />}
-      {activeTab === 'history' && <TeacherAttendanceHistory />}
+      {activeTab === 'submit'        && <TeacherMarkAttendance />}
+      {activeTab === 'history'       && <TeacherAttendanceHistory />}
       {activeTab === 'my-attendance' && <MyOwnAttendanceRecords />}
-      {activeTab === 'manage' && <AdminStudentAttendance />}
+      {activeTab === 'manage'        && <AdminStudentAttendance />}
       {activeTab === 'submit-behalf' && <AdminSubmitOnBehalf />}
-      {activeTab === 'teachers' && <StaffAttendancePanel type="teacher" />}
-      {activeTab === 'volunteers' && <StaffAttendancePanel type="volunteer" />}
-
-      <style>{`
-        .staff-att-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-          gap: 12px;
-        }
-        @media (max-width: 480px) {
-          .staff-att-grid { grid-template-columns: 1fr; }
-          .sm-label { display: inline !important; }
-        }
-        .sm-label { display: none; }
-      `}</style>
+      {activeTab === 'teachers'      && <StaffAttendancePanel type="teacher" />}
+      {activeTab === 'volunteers'    && <StaffAttendancePanel type="volunteer" />}
     </div>
   );
 }
