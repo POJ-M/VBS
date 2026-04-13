@@ -1,12 +1,17 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
-import { attendanceAPI, teachersAPI, volunteersAPI } from '../services/api';
+import { ChevronLeft, ChevronRight, RefreshCw, User, Calendar, Clock, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
+import { attendanceAPI, teachersAPI } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 import { LoadingPage } from '../components/common';
 
 /* ─── Helpers ────────────────────────────────────────────────────── */
 const fmtDate = d => new Date(d).toLocaleDateString('en-IN', {
   timeZone: 'Asia/Kolkata', weekday: 'short', day: '2-digit', month: 'short', year: 'numeric'
+});
+
+const fmtDateShort = d => new Date(d).toLocaleDateString('en-IN', {
+  timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric'
 });
 
 const STATUS_CFG = {
@@ -92,7 +97,213 @@ function ViewToggle({ view, setView }) {
   );
 }
 
-/* ─── TEACHER ATTENDANCE RECORDS ─────────────────────────────────── */
+/* ─── MY OWN ATTENDANCE (Teacher self-view) ──────────────────────── */
+export function MyOwnAttendanceRecords() {
+  const { user } = useAuth();
+  const PAGE = 15;
+  const [page, setPage] = useState(1);
+
+  // Step 1: Find the teacher profile linked to this user
+  const { data: teachers, isLoading: loadingTeacher } = useQuery({
+    queryKey: ['teachers-list-for-self'],
+    queryFn: () => teachersAPI.getAll({ isActive: true }),
+    select: d => d.data?.data || [],
+  });
+
+  const myTeacherProfile = teachers?.find(t =>
+    t.user?._id?.toString() === user?._id?.toString() ||
+    t.user?.toString() === user?._id?.toString()
+  );
+
+  // Step 2: Fetch own attendance records
+  const { data: records, isLoading: loadingRecords, refetch, isFetching } = useQuery({
+    queryKey: ['my-own-teacher-attendance', myTeacherProfile?._id],
+    queryFn: () => attendanceAPI.getTeacherAttendance({ teacherId: myTeacherProfile._id }),
+    select: d => d.data?.data || [],
+    enabled: !!myTeacherProfile?._id,
+  });
+
+  if (loadingTeacher || loadingRecords) return <LoadingPage />;
+
+  if (!myTeacherProfile) {
+    return (
+      <div style={{ textAlign: 'center', padding: 56, maxWidth: 420, margin: '0 auto' }}>
+        <div style={{ width: 64, height: 64, borderRadius: 16, background: 'var(--color-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+          <User size={32} color="var(--color-text-muted)" />
+        </div>
+        <h3 style={{ fontWeight: 700, marginBottom: 8 }}>No Teacher Profile Linked</h3>
+        <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.875rem' }}>
+          Your account is not linked to a teacher profile. Contact your administrator.
+        </p>
+      </div>
+    );
+  }
+
+  const allRecords = (records || []).slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+  const paged = allRecords.slice((page - 1) * PAGE, page * PAGE);
+  const pages = Math.ceil(allRecords.length / PAGE);
+
+  // Compute stats
+  const stats = allRecords.reduce((acc, r) => {
+    acc[r.status] = (acc[r.status] || 0) + 1;
+    return acc;
+  }, {});
+  const presentTotal = (stats.present || 0) + (stats.late || 0);
+  const rate = allRecords.length > 0 ? Math.round((presentTotal / allRecords.length) * 100) : 0;
+
+  // Calendar heatmap data — last 30 days
+  const last30 = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const isoDate = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // YYYY-MM-DD
+    const rec = allRecords.find(r => {
+      const rd = new Date(r.date).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+      return rd === isoDate;
+    });
+    last30.push({ date: d, isoDate, status: rec?.status || null, arrivalTime: rec?.arrivalTime || null });
+  }
+
+  return (
+    <div>
+      {/* Profile Card */}
+      <div style={{
+        background: 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-light) 100%)',
+        borderRadius: 16, padding: '18px 22px', marginBottom: 20,
+        display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+      }}>
+        <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'rgba(255,255,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: '2px solid rgba(255,255,255,0.25)' }}>
+          <User size={24} color="white" />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 800, fontSize: '1.05rem', color: 'white' }}>{myTeacherProfile.name}</div>
+          <div style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.65)', marginTop: 3 }}>
+            {myTeacherProfile.classAssigned?.name
+              ? <>Class: <strong style={{ color: 'rgba(255,255,255,0.9)' }}>{myTeacherProfile.classAssigned.name}</strong> ({myTeacherProfile.classAssigned.category})</>
+              : <span style={{ color: 'rgba(255,255,255,0.5)' }}>No class assigned</span>}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+          {[
+            { label: 'Total Days', val: allRecords.length, color: 'rgba(255,255,255,0.9)' },
+            { label: 'Present', val: stats.present || 0, color: '#86efac' },
+            { label: 'Late', val: stats.late || 0, color: '#fde68a' },
+            { label: 'Absent', val: stats.absent || 0, color: '#fca5a5' },
+          ].map(s => (
+            <div key={s.label} style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '1.4rem', fontWeight: 900, color: s.color, lineHeight: 1 }}>{s.val}</div>
+              <div style={{ fontSize: '0.62rem', color: 'rgba(255,255,255,0.5)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 3 }}>{s.label}</div>
+            </div>
+          ))}
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: '1.4rem', fontWeight: 900, color: rate >= 80 ? '#86efac' : rate >= 60 ? '#fde68a' : '#fca5a5', lineHeight: 1 }}>{rate}%</div>
+            <div style={{ fontSize: '0.62rem', color: 'rgba(255,255,255,0.5)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 3 }}>Rate</div>
+          </div>
+        </div>
+      </div>
+
+      {/* 30-day Calendar Heatmap */}
+      <div className="card" style={{ marginBottom: 20, padding: '16px 18px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <div style={{ fontWeight: 700, fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Calendar size={15} color="var(--color-primary)" /> Last 30 Days
+          </div>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            {[
+              { label: 'Present', color: '#16a34a', bg: '#dcfce7' },
+              { label: 'Late', color: '#d97706', bg: '#fef9c3' },
+              { label: 'Absent', color: '#dc2626', bg: '#fee2e2' },
+              { label: 'No Record', color: '#94a3b8', bg: '#f1f5f9' },
+            ].map(l => (
+              <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.68rem', color: 'var(--color-text-secondary)', fontWeight: 600 }}>
+                <div style={{ width: 10, height: 10, borderRadius: 3, background: l.bg, border: `1px solid ${l.color}40` }} />
+                {l.label}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(10, 1fr)', gap: 4 }}>
+          {last30.map((d, idx) => {
+            const s = d.status;
+            const bg = s === 'present' ? '#dcfce7' : s === 'late' ? '#fef9c3' : s === 'absent' ? '#fee2e2' : s === 'leave' ? '#ede9fe' : '#f1f5f9';
+            const border = s === 'present' ? '#86efac' : s === 'late' ? '#fde68a' : s === 'absent' ? '#fca5a5' : s === 'leave' ? '#c4b5fd' : '#e2e8f0';
+            const textColor = s === 'present' ? '#15803d' : s === 'late' ? '#a16207' : s === 'absent' ? '#b91c1c' : s === 'leave' ? '#6d28d9' : '#9ca3af';
+            const dayLabel = d.date.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit' });
+            const monthLabel = d.date.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', month: 'short' });
+            return (
+              <div key={idx} title={`${fmtDateShort(d.date)}${s ? ` — ${STATUS_CFG[s]?.label || s}` : ' — No Record'}${d.arrivalTime ? ` at ${d.arrivalTime}` : ''}`}
+                style={{ background: bg, border: `1.5px solid ${border}`, borderRadius: 7, padding: '5px 3px', textAlign: 'center', cursor: 'default', transition: 'transform 0.1s' }}
+                onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.08)'}
+                onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
+              >
+                <div style={{ fontSize: '0.68rem', fontWeight: 800, color: textColor, lineHeight: 1 }}>{dayLabel}</div>
+                <div style={{ fontSize: '0.55rem', color: textColor, opacity: 0.7, marginTop: 1 }}>{monthLabel}</div>
+                {s && <div style={{ fontSize: '0.5rem', fontWeight: 800, color: textColor, marginTop: 2, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{s === 'present' ? '✓' : s === 'late' ? 'L' : s === 'absent' ? '✗' : s === 'leave' ? 'Lv' : ''}</div>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Records Table */}
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Clock size={15} color="var(--color-primary)" />
+            Attendance History
+          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{allRecords.length} records</span>
+            <button className="btn btn-secondary btn-sm" onClick={() => refetch()} disabled={isFetching}>
+              <RefreshCw size={13} className={isFetching ? 'spin' : ''} />
+            </button>
+          </div>
+        </div>
+
+        {allRecords.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 48, color: 'var(--color-text-secondary)', fontSize: '0.875rem' }}>
+            <AlertTriangle size={32} style={{ margin: '0 auto 12px', display: 'block', color: 'var(--color-text-muted)' }} />
+            No attendance records found yet.
+          </div>
+        ) : (
+          <>
+            <div className="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Status</th>
+                    <th>Arrival Time</th>
+                    <th>Departure Time</th>
+                    <th>Remarks</th>
+                    <th>Marked By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paged.map(r => (
+                    <tr key={r._id}>
+                      <td style={{ fontWeight: 600, whiteSpace: 'nowrap', fontSize: '0.82rem' }}>{fmtDate(r.date)}</td>
+                      <td><StatusPill status={r.status} /></td>
+                      <td><TimePill time={r.arrivalTime} /></td>
+                      <td><TimePill time={r.departureTime} /></td>
+                      <td style={{ color: 'var(--color-text-secondary)', fontSize: '0.78rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {r.remarks || <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
+                      </td>
+                      <td style={{ color: 'var(--color-text-muted)', fontSize: '0.73rem' }}>{r.markedByName || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pager page={page} pages={pages} total={allRecords.length} size={PAGE} onPage={p => setPage(p)} />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─── TEACHER ATTENDANCE RECORDS (admin view) ─────────────────────── */
 export function TeacherAttendanceRecords() {
   const PAGE = 20;
   const [page, setPage] = useState(1);
@@ -284,9 +495,10 @@ export function VolunteerAttendanceRecords() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
+  // Import volunteersAPI inline to avoid circular import
   const { data: volunteers } = useQuery({
     queryKey: ['vol-list'],
-    queryFn: () => volunteersAPI.getAll().then(r => r.data?.data || []),
+    queryFn: () => import('../services/api').then(m => m.volunteersAPI.getAll().then(r => r.data?.data || [])),
   });
 
   const { data: records, isLoading, refetch, isFetching } = useQuery({
