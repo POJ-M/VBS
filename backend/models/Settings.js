@@ -14,7 +14,6 @@ const photoSchema = new mongoose.Schema({
   year: { type: Number },
 });
 
-// FIX: Added youtubeVideos schema (was used in frontend but missing from model)
 const youtubeVideoSchema = new mongoose.Schema({
   url: { type: String, required: true, trim: true },
   title: { type: String, trim: true },
@@ -34,21 +33,9 @@ const settingsSchema = new mongoose.Schema(
       trim: true,
       maxlength: [200, 'Title cannot exceed 200 characters'],
     },
-    vbsVerseRef: {
-      type: String,
-      trim: true,
-      maxlength: [100, 'Verse reference cannot exceed 100 characters'],
-    },
-    vbsVerse: {
-      type: String,
-      trim: true,
-      maxlength: [500, 'Verse cannot exceed 500 characters'],
-    },
-    tagline: {
-      type: String,
-      trim: true,
-      maxlength: [300, 'Tagline cannot exceed 300 characters'],
-    },
+    vbsVerseRef: { type: String, trim: true, maxlength: [100, 'Verse reference cannot exceed 100 characters'] },
+    vbsVerse: { type: String, trim: true, maxlength: [500, 'Verse cannot exceed 500 characters'] },
+    tagline: { type: String, trim: true, maxlength: [300, 'Tagline cannot exceed 300 characters'] },
     theme: {
       mainColor: { type: String, default: '#2563EB' },
       accentColor: { type: String, default: '#F59E0B' },
@@ -67,33 +54,21 @@ const settingsSchema = new mongoose.Schema(
       teacherAttendance: { flexible: { type: Boolean, default: true } },
       volunteerAttendance: { flexible: { type: Boolean, default: true } },
       timezone: { type: String, default: 'Asia/Kolkata' },
+      // ── NEW: Manual stop for leave days / cancelled sessions ───────
+      attendanceStopped: { type: Boolean, default: false },
+      stopReason: { type: String, trim: true, default: '' },
+      stoppedAt: { type: Date },
+      stoppedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     },
     dailyThemes: [dailyThemeSchema],
     previousYearPhotos: [photoSchema],
-    // FIX: Added missing youtubeVideos field
     youtubeVideos: [youtubeVideoSchema],
-    isActive: {
-      type: Boolean,
-      default: false,
-    },
-    registrationEnabled: {
-      type: Boolean,
-      default: false,
-    },
-    registrationMessage: {
-      type: String,
-      trim: true,
-    },
-    lowAttendanceThreshold: {
-      type: Number,
-      default: 70,
-      min: 0,
-      max: 100,
-    },
+    isActive: { type: Boolean, default: false },
+    registrationEnabled: { type: Boolean, default: false },
+    registrationMessage: { type: String, trim: true },
+    lowAttendanceThreshold: { type: Number, default: 70, min: 0, max: 100 },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
 // Ensure only one active year
