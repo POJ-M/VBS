@@ -5,12 +5,13 @@ import {
   Edit2, Trash2, History, Save, Check, X, Clock, AlertCircle,
   RefreshCw, ChevronLeft, ChevronRight, Users, GraduationCap,
   Heart, Calendar, CheckSquare, AlertTriangle, Info, BarChart2,
-  Download, Printer, FileText
+  Download, Printer, FileText, UserCheck
 } from 'lucide-react';
 import { attendanceAPI, classesAPI, teachersAPI, volunteersAPI, settingsAPI } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useActiveYear } from '../contexts/ActiveYearContext';
 import DateInput from '../components/Dateinput';
+import { MyOwnAttendanceRecords } from './Attendancerecordsview';
 import toast from 'react-hot-toast';
 
 // ─── Helpers ──────────────────────────────────────────────────────
@@ -100,15 +101,8 @@ function WindowBanner({ showForTeacher }) {
 }
 
 // ─── Pending Classes Panel ─────────────────────────────────────────
-// Fix 3: Shows classes that haven't submitted attendance for a given date.
-// Logic: A class is "pending" if it has no attendance record for the date.
-// Mid-VBS students: we count students active AT time of attendance (using class roster),
-// not just registered students, so classes with 0 students are also shown as pending
-// but clearly labelled "No students yet" to be informative.
 function PendingClassesPanel({ date, vbsYear, classes, submittedRecords, onSubmitForClass }) {
   const submittedClassIds = new Set((submittedRecords || []).map(r => r.class?._id?.toString() || r.class?.toString()));
-
-  // Filter to classes that haven't submitted for this date
   const pendingClasses = (classes || []).filter(c => !submittedClassIds.has(c._id?.toString()));
 
   if (pendingClasses.length === 0) {
@@ -189,7 +183,6 @@ function PendingClassesPanel({ date, vbsYear, classes, submittedRecords, onSubmi
 }
 
 // ─── Export Attendance Modal ───────────────────────────────────────
-// Fix 4: Classwise attendance export with student list
 function ExportAttendanceModal({ isOpen, onClose, date, records, classes }) {
   const [selectedClasses, setSelectedClasses] = useState([]);
 
@@ -287,17 +280,12 @@ function ExportAttendanceModal({ isOpen, onClose, date, records, classes }) {
       @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
     </style></head><body>
     <div style="border-bottom:3px solid #1a2f5e;padding-bottom:10px;margin-bottom:14px; display:flex; align-items:center; gap:10px;">
-      <img 
-        src="/poj-logo.png" 
-        alt="POJ Logo" 
-        style="height:40px; width:auto; object-fit:contain;"
-      />
+      <img src="/poj-logo.png" alt="POJ Logo" style="height:40px; width:auto; object-fit:contain;" />
       <div>
         <h1 style="margin:0;">Presence of Jesus Ministry</h1>
         <h2 style="margin:0;">Student Attendance — ${formatDisplayDate(date)}</h2>
       </div>
     </div>
-
     <h3 style="font-size:0.82rem;font-weight:700;color:#1a2f5e;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.06em">Summary</h3>
     <table style="margin-bottom:20px">
       <thead><tr>
@@ -307,10 +295,8 @@ function ExportAttendanceModal({ isOpen, onClose, date, records, classes }) {
       </tr></thead>
       <tbody>${summaryRows}</tbody>
     </table>
-
     <h3 style="font-size:0.82rem;font-weight:700;color:#1a2f5e;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Class-wise Student Details</h3>
     ${classDetails}
-
     <div class="footer">
       <span>VBS Management System — Presence of Jesus Ministry</span>
       <span>Generated: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST</span>
@@ -339,7 +325,6 @@ function ExportAttendanceModal({ isOpen, onClose, date, records, classes }) {
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)' }}><X size={18} /></button>
         </div>
         <div style={{ padding: '18px 22px' }}>
-          {/* Summary */}
           <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
             {[
               { label: 'Classes', value: selectedClasses.length, color: '#3b82f6' },
@@ -355,7 +340,6 @@ function ExportAttendanceModal({ isOpen, onClose, date, records, classes }) {
           </div>
 
           <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text-secondary)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Select Classes to Export</div>
-
           <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
             <button onClick={() => setSelectedClasses((records || []).map(r => r._id))}
               style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'white', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font-sans)' }}>
@@ -569,7 +553,6 @@ function TeacherMarkAttendance() {
         <div className="card-header">
           <span className="card-title">{classData.name} — {formatDisplayDate(date)}</span>
         </div>
-        {/* Mobile-friendly table */}
         <div style={{ overflowX: 'auto' }}>
           <table style={{ minWidth: 400 }}>
             <thead>
@@ -610,7 +593,6 @@ function TeacherMarkAttendance() {
                                 color: currentStatus === st ? 'white' : 'var(--color-text-secondary)',
                               }}>
                               {st === 'present' ? '✓' : '✗'}
-                              <span style={{ display: 'none' }}> {st === 'present' ? 'Present' : 'Absent'}</span>
                               <span className="sm-label"> {st === 'present' ? 'P' : 'A'}</span>
                             </button>
                           ))}
@@ -644,7 +626,7 @@ function TeacherMarkAttendance() {
   );
 }
 
-// ─── Teacher: Attendance History ───────────────────────────────────
+// ─── Teacher: Attendance History (submissions) ─────────────────────
 function TeacherAttendanceHistory() {
   const { user } = useAuth();
   const [page, setPage] = useState(1);
@@ -673,17 +655,14 @@ function TeacherAttendanceHistory() {
  
   if (isLoading) return <div className="loading-center"><div className="spinner" /></div>;
  
-  // FIX 3: Sort ASC by date so Day 1 = earliest date, Day N = latest date
   const sortedAsc = [...(history || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
   const totalRecords = sortedAsc.length;
  
-  // Build a map: record _id → day number (1-based, chronological)
   const dayNumberMap = {};
   sortedAsc.forEach((rec, idx) => {
     dayNumberMap[rec._id] = idx + 1;
   });
  
-  // For display: show newest first (DESC) but keep correct day numbers
   const sortedDesc = [...sortedAsc].reverse();
   const totalPages = Math.ceil(sortedDesc.length / pageSize);
   const paged = sortedDesc.slice((page - 1) * pageSize, page * pageSize);
@@ -699,7 +678,7 @@ function TeacherAttendanceHistory() {
   return (
     <div>
       <div style={{ marginBottom: 14, fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
-        {totalRecords} records for {classData?.name}
+        {totalRecords} submission records for {classData?.name}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {paged.map(rec => {
@@ -707,7 +686,6 @@ function TeacherAttendanceHistory() {
           const absent = rec.records?.filter(r => r.status === 'absent').length || 0;
           const total = present + absent;
           const rate = total > 0 ? Math.round((present / total) * 100) : 0;
-          // FIX 3: Use the chronological day number from our map
           const dayNum = dayNumberMap[rec._id];
           return (
             <div key={rec._id} className="card" style={{ padding: '14px 16px' }}>
@@ -873,7 +851,6 @@ function StaffAttendancePanel({ type }) {
         </div>
       )}
 
-      {/* Mobile-friendly cards for smaller screens */}
       <div className="staff-att-grid">
         {entityList.map(e => {
           const existing = existingRecords?.[e._id];
@@ -957,13 +934,11 @@ function AdminStudentAttendance() {
   const [page, setPage] = useState(1);
   const qc = useQueryClient();
 
-  // Fetch active settings for VBS dates
   const { data: activeSettings } = useQuery({
     queryKey: ['active-settings'],
     queryFn: () => settingsAPI.getActive().then(r => r.data?.data),
   });
 
-  // Fetch ALL classes for this year to show pending ones
   const { data: allClasses } = useQuery({
     queryKey: ['classes', vbsYear],
     queryFn: () => classesAPI.getAll({ year: vbsYear }),
@@ -990,7 +965,6 @@ function AdminStudentAttendance() {
   const totalAbsent = allRecords.reduce((sum, r) => sum + (r.records?.filter(x => x.status === 'absent').length || 0), 0);
   const overallRate = (totalPresent + totalAbsent) > 0 ? Math.round((totalPresent / (totalPresent + totalAbsent)) * 100) : 0;
 
-  // Merge class list with student counts for pending panel
   const classesWithCounts = (allClasses || []).map(cls => ({
     ...cls,
     studentCount: allRecords.find(r => r.class?._id?.toString() === cls._id?.toString())?.records?.length || cls.studentCount || 0,
@@ -1021,13 +995,12 @@ function AdminStudentAttendance() {
         </div>
       </div>
 
-      {/* Fix 3: Pending classes panel */}
       <PendingClassesPanel
         date={dateFilter}
         vbsYear={vbsYear}
         classes={classesWithCounts}
         submittedRecords={allRecords}
-        onSubmitForClass={null} // Admin can submit via the "Submit (Admin)" tab
+        onSubmitForClass={null}
       />
 
       {allRecords.length > 0 && (
@@ -1393,8 +1366,7 @@ function AdminSubmitOnBehalf() {
           {students.length === 0 ? (
             <div style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-secondary)', fontSize: '0.875rem' }}>
               <Users size={28} style={{ margin: '0 auto 8px', display: 'block', color: 'var(--color-text-muted)' }} />
-              No students assigned to this class yet.<br />
-              <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>Students added mid-VBS will appear here once allocated.</span>
+              No students assigned to this class yet.
             </div>
           ) : (
             <>
@@ -1466,13 +1438,14 @@ export default function AttendancePage({ initialTab }) {
     ],
     teacher: [
       { id: 'submit', label: '✏️ Mark Attendance' },
-      { id: 'history', label: '📅 History' },
+      { id: 'history', label: '📅 Submission History' },
+      { id: 'my-attendance', label: '👤 My Attendance' },
     ],
   };
 
   const tabs = tabsByRole[user.role] || [];
   const getDefaultTab = () => {
-    if (initialTab === 'my-attendance') return 'history';
+    if (initialTab === 'my-attendance') return 'my-attendance';
     if (initialTab === 'submit') return 'submit';
     return tabs[0]?.id;
   };
@@ -1484,7 +1457,7 @@ export default function AttendancePage({ initialTab }) {
         <div>
           <h1 className="page-title">Attendance</h1>
           <p className="page-subtitle">
-            {user.role === 'teacher' ? 'Mark and view attendance for your class' : 'Manage daily attendance'}
+            {user.role === 'teacher' ? 'Mark attendance and view your records' : 'Manage daily attendance'}
           </p>
         </div>
       </div>
@@ -1495,9 +1468,12 @@ export default function AttendancePage({ initialTab }) {
           <button key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             style={{
-              padding: '8px 14px', borderRadius: 10, border: `1.5px solid ${activeTab === tab.id ? 'var(--color-primary)' : 'var(--color-border)'}`,
-              background: activeTab === tab.id ? 'var(--color-primary)' : 'white', color: activeTab === tab.id ? 'white' : 'var(--color-text-secondary)',
-              cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 600, fontSize: '0.82rem', whiteSpace: 'nowrap', transition: 'all 0.15s',
+              padding: '8px 14px', borderRadius: 10,
+              border: `1.5px solid ${activeTab === tab.id ? 'var(--color-primary)' : 'var(--color-border)'}`,
+              background: activeTab === tab.id ? 'var(--color-primary)' : 'white',
+              color: activeTab === tab.id ? 'white' : 'var(--color-text-secondary)',
+              cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 600,
+              fontSize: '0.82rem', whiteSpace: 'nowrap', transition: 'all 0.15s',
             }}>
             {tab.label}
           </button>
@@ -1506,6 +1482,7 @@ export default function AttendancePage({ initialTab }) {
 
       {activeTab === 'submit' && <TeacherMarkAttendance />}
       {activeTab === 'history' && <TeacherAttendanceHistory />}
+      {activeTab === 'my-attendance' && <MyOwnAttendanceRecords />}
       {activeTab === 'manage' && <AdminStudentAttendance />}
       {activeTab === 'submit-behalf' && <AdminSubmitOnBehalf />}
       {activeTab === 'teachers' && <StaffAttendancePanel type="teacher" />}
