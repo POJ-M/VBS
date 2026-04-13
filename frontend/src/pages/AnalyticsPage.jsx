@@ -14,6 +14,26 @@ const CATEGORY_COLORS = { Beginner: '#8b5cf6', Primary: '#3b82f6', Junior: '#10b
 const GENDER_COLORS = { male: '#3b82f6', female: '#ec4899', other: '#8b5cf6' };
 const RELIGION_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#8b5cf6', '#ec4899'];
 
+/**
+ * Safely formats a date value (ISO string, Date, timestamp) to a locale display string.
+ * Returns '—' for invalid/null/undefined dates.
+ */
+const safeFormatDate = (dateVal) => {
+  if (!dateVal) return '—';
+  try {
+    const d = new Date(dateVal);
+    // Check for Invalid Date
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleDateString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      month: 'short',
+      day: 'numeric',
+    });
+  } catch {
+    return '—';
+  }
+};
+
 function ChartCard({ title, children, height = 280 }) {
   return (
     <div className="card">
@@ -48,7 +68,6 @@ function NoYearState() {
 export default function AnalyticsPage() {
   const { vbsYear, activeYear } = useActiveYear();
 
-  // All queries gated on vbsYear and include it in the query key
   const { data: studentData, isLoading: loadingStudents } = useQuery({
     queryKey: ['student-analytics', vbsYear],
     queryFn: () => analyticsAPI.getStudentAnalytics({ vbsYear }),
@@ -81,19 +100,36 @@ export default function AnalyticsPage() {
   const villageData = (studentData?.villageDistribution || []).slice(0, 10);
   const denomData = (studentData?.denominationDistribution || []);
 
-  const studentTrends = (trendsData?.studentTrends || []).map(t => ({
-    date: new Date(t.date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }),
-    'Rate (%)': Math.round(t.rate || 0),
-    Present: t.present,
-    Absent: t.absent,
-  }));
+  // ── Student Trends — safe date formatting ─────────────────────
+  const studentTrends = (trendsData?.studentTrends || [])
+    .filter(t => t.date && !isNaN(new Date(t.date).getTime())) // skip invalid dates
+    .map(t => ({
+      date: safeFormatDate(t.date),
+      'Rate (%)': Math.round(t.rate || 0),
+      Present: t.present,
+      Absent: t.absent,
+    }))
+    .filter(t => t.date !== '—'); // extra guard
 
-  const teacherTrends = (trendsData?.teacherTrends || []).map(t => ({
-    date: new Date(t.date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }),
-    Present: t.present || 0,
-    Absent: t.absent || 0,
-    Late: t.late || 0,
-  }));
+  // ── Teacher Trends — safe date formatting (was the buggy one) ─
+  const teacherTrends = (trendsData?.teacherTrends || [])
+    .filter(t => {
+      // The _id field from MongoDB aggregation may be a Date object or ISO string
+      const dateVal = t._id || t.date;
+      if (!dateVal) return false;
+      const parsed = new Date(dateVal);
+      return !isNaN(parsed.getTime());
+    })
+    .map(t => {
+      const dateVal = t._id || t.date;
+      return {
+        date: safeFormatDate(dateVal),
+        Present: t.present || 0,
+        Absent: t.absent || 0,
+        Late: t.late || 0,
+      };
+    })
+    .filter(t => t.date !== '—'); // skip any that still failed
 
   const classPerf = (trendsData?.classPerformance || []).map(c => ({
     class: c.className,
@@ -114,7 +150,6 @@ export default function AnalyticsPage() {
             {activeYear?.vbsTitle || `VBS ${vbsYear}`} — Visual overview of program data
           </p>
         </div>
-        {/* Year indicator badge */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, fontSize: '0.82rem', fontWeight: 700, color: '#1e40af' }}>
           <Calendar size={14} /> VBS {vbsYear}
         </div>
@@ -180,7 +215,7 @@ export default function AnalyticsPage() {
       )}
 
       {/* Student Attendance Trend */}
-      {studentTrends.length > 0 && (
+      {studentTrends.length > 0 ? (
         <div style={{ marginBottom: 20 }}>
           <ChartCard title={`📈 Student Attendance Rate — VBS ${vbsYear}`} height={240}>
             <LineChart data={studentTrends}>
@@ -192,10 +227,14 @@ export default function AnalyticsPage() {
             </LineChart>
           </ChartCard>
         </div>
+      ) : (
+        <div className="card" style={{ marginBottom: 20, padding: '24px', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>
+          📈 No student attendance data available for VBS {vbsYear} yet.
+        </div>
       )}
 
-      {/* Teacher Attendance Trend */}
-      {teacherTrends.length > 0 && (
+      {/* Teacher Attendance Trend — fixed invalid date */}
+      {teacherTrends.length > 0 ? (
         <div style={{ marginBottom: 20 }}>
           <ChartCard title="👩‍🏫 Teacher Attendance Trend" height={220}>
             <BarChart data={teacherTrends}>
@@ -209,6 +248,10 @@ export default function AnalyticsPage() {
               <Bar dataKey="Absent" stackId="a" fill="#ef4444" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ChartCard>
+        </div>
+      ) : (
+        <div className="card" style={{ marginBottom: 20, padding: '24px', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>
+          👩‍🏫 No teacher attendance data available for VBS {vbsYear} yet.
         </div>
       )}
 
@@ -287,7 +330,7 @@ export default function AnalyticsPage() {
       )}
 
       {/* Empty state when no data */}
-      {!studentData?.totalStudents && !studentTrends.length && (
+      {!studentData?.totalStudents && !studentTrends.length && !teacherTrends.length && (
         <div className="empty-state" style={{ marginTop: 24 }}>
           <BarChart2 size={36} style={{ color: 'var(--color-text-muted)' }} />
           <h3>No Data for VBS {vbsYear}</h3>
