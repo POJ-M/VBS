@@ -11,7 +11,7 @@ const {
 
 // @desc    Get student attendance records
 // @route   GET /api/attendance/students
-// @access  Admin, Viewer, Teacher (own class)
+// @access  Admin, Viewer, Editor, Teacher (own class)
 const getStudentAttendance = async (req, res, next) => {
   try {
     const { date, startDate, endDate, classId, vbsYear } = req.query;
@@ -45,9 +45,9 @@ const getStudentAttendance = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-// @desc    Submit student attendance (Teacher within window, Admin anytime)
+// @desc    Submit student attendance
 // @route   POST /api/attendance/students
-// @access  Teacher, Admin
+// @access  Teacher, Admin, Editor (with restrictions)
 const submitStudentAttendance = async (req, res, next) => {
   try {
     const { date, classId, records } = req.body;
@@ -70,7 +70,7 @@ const submitStudentAttendance = async (req, res, next) => {
       return res.status(400).json({ success: false, message: scheduleCheck.message });
     }
 
-    // Time window check for teachers only
+    // ── Time window check for teachers AND editors ──────────────────
     if (req.user.role === 'teacher') {
       // Verify teacher owns this class
       const teacher = await Teacher.findOne({ user: req.user._id });
@@ -97,6 +97,34 @@ const submitStudentAttendance = async (req, res, next) => {
       }
     }
 
+    // ── Editor restrictions ─────────────────────────────────────────
+    // Editors can submit for any class, but only today within the window
+    if (req.user.role === 'editor') {
+      // Editors can only submit for today
+      const isToday = attendanceDate.getTime() === todayIST.getTime();
+      if (!isToday) {
+        return res.status(400).json({
+          success: false,
+          message: 'Editors can only submit attendance for today',
+        });
+      }
+
+      // Enforce time window (same as teachers)
+      const windowCheck = await checkAttendanceWindow();
+      if (!windowCheck.allowed) {
+        return res.status(400).json({ success: false, message: windowCheck.message });
+      }
+
+      // Prevent duplicate submission (editors cannot overwrite existing records)
+      const existing = await StudentAttendance.findOne({ date: attendanceDate, class: classId });
+      if (existing) {
+        return res.status(400).json({
+          success: false,
+          message: 'Attendance already submitted for this class and date. Contact admin to modify.',
+        });
+      }
+    }
+
     const cls = await Class.findById(classId);
     if (!cls) return res.status(404).json({ success: false, message: 'Class not found' });
 
@@ -106,6 +134,7 @@ const submitStudentAttendance = async (req, res, next) => {
       vbsYear: scheduleCheck.vbsYear,
       submittedBy: req.user._id,
       submittedByName: req.user.name,
+      // Mark editor submissions clearly
       submittedByRole: req.user.role === 'admin' ? 'admin' : 'teacher',
       records: records.map((r) => ({ student: r.studentId, status: r.status })),
     });
@@ -219,7 +248,6 @@ const getWindowStatus = async (req, res, next) => {
 // @access  Admin, Editor, Viewer
 const getTodaySummary = async (req, res, next) => {
   try {
-    // Use IST-normalized today — fixes the UTC midnight vs IST midnight bug
     const todayIST = normalizeToISTMidnight(new Date());
     const { vbsYear } = req.query;
 
@@ -231,7 +259,6 @@ const getTodaySummary = async (req, res, next) => {
       StudentAttendance.find({ date: todayIST, ...yearFilter })
         .populate('class', 'name category')
         .populate('submittedBy', 'name'),
-      // FIX: Class model has no isActive field — removed that filter
       Class.find(activeYear ? { year: activeYear } : {}),
     ]);
 
