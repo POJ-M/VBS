@@ -6,7 +6,7 @@ import {
   RefreshCw, ChevronLeft, ChevronRight, Users, GraduationCap,
   Heart, Calendar, CheckSquare, AlertTriangle, Info, BarChart2,
   Download, Printer, FileText, UserCheck, StopCircle, PlayCircle,
-  Pause, Ban
+  Pause, Ban, UserPlus, Star
 } from 'lucide-react';
 import { attendanceAPI, classesAPI, teachersAPI, volunteersAPI, settingsAPI } from '../services/api';
 import api from '../services/api';
@@ -64,6 +64,58 @@ const RateBar = ({ rate }) => (
   </div>
 );
 
+// ─── New Students Alert Banner ──────────────────────────────────────
+// Shows when a class already submitted attendance but has new students assigned after submission
+function NewStudentsAlert({ existingRecord, currentStudents }) {
+  if (!existingRecord || !currentStudents?.length) return null;
+
+  const submittedStudentIds = new Set(
+    (existingRecord.records || []).map(r => r.student?._id?.toString() || r.student?.toString())
+  );
+  const newStudents = currentStudents.filter(s => !submittedStudentIds.has(s._id?.toString()));
+
+  if (newStudents.length === 0) return null;
+
+  return (
+    <div style={{
+      background: 'linear-gradient(135deg, #fef3c7, #fef9e8)',
+      border: '1.5px solid #fbbf24',
+      borderRadius: 12,
+      padding: '14px 18px',
+      marginBottom: 16,
+      display: 'flex',
+      gap: 12,
+      alignItems: 'flex-start',
+    }}>
+      <div style={{ width: 36, height: 36, borderRadius: 10, background: '#fef3c7', border: '1.5px solid #f59e0b', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        <UserPlus size={18} color="#d97706" />
+      </div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontWeight: 800, fontSize: '0.875rem', color: '#92400e', marginBottom: 4 }}>
+          {newStudents.length} New Student{newStudents.length > 1 ? 's' : ''} Added After Submission
+        </div>
+        <div style={{ fontSize: '0.78rem', color: '#a16207', lineHeight: 1.5, marginBottom: 8 }}>
+          The following student{newStudents.length > 1 ? 's were' : ' was'} assigned to this class <strong>after</strong> attendance was already submitted. Their attendance is not recorded for this date. An admin can modify the record to include them.
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {newStudents.map(s => (
+            <span key={s._id} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '3px 10px', borderRadius: 99,
+              background: 'white', border: '1px solid #fbbf24',
+              fontSize: '0.75rem', fontWeight: 700, color: '#92400e',
+            }}>
+              <Star size={10} fill="#f59e0b" color="#f59e0b" />
+              {s.name}
+              <span style={{ fontWeight: 400, color: '#a16207' }}>· {s.grade}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Stop Window Modal ─────────────────────────────────────────────
 function StopWindowModal({ isOpen, onClose, settings, onToggle, loading }) {
   const [reason, setReason] = useState('');
@@ -80,7 +132,6 @@ function StopWindowModal({ isOpen, onClose, settings, onToggle, loading }) {
       onClick={onClose}>
       <div style={{ background: 'white', borderRadius: 20, width: '100%', maxWidth: 460, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}
         onClick={e => e.stopPropagation()}>
-        {/* Header */}
         <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ width: 38, height: 38, borderRadius: 10, background: isStopped ? '#f0fdf4' : '#fef2f2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -187,7 +238,6 @@ function WindowBanner({ user, activeSettingsId, activeSettings }) {
         background: isStopped ? '#fff7ed' : windowData?.allowed ? '#f0fdf4' : '#fef2f2',
         border: `1px solid ${isStopped ? '#fed7aa' : windowData?.allowed ? '#bbf7d0' : '#fecaca'}`,
       }}>
-        {/* Status pill */}
         <span style={{
           padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 800,
           letterSpacing: '0.05em', textTransform: 'uppercase',
@@ -213,7 +263,6 @@ function WindowBanner({ user, activeSettingsId, activeSettings }) {
             <RefreshCw size={14} />
           </button>
 
-          {/* Admin stop/resume button */}
           {isAdmin && activeSettingsId && (
             <button
               onClick={() => setShowStopModal(true)}
@@ -367,7 +416,6 @@ function TeacherMarkAttendance() {
 
   return (
     <div style={{ maxWidth: '100%' }}>
-      {/* Window banner for teachers — show stopped state */}
       {windowStopped && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderRadius: 10, marginBottom: 16, background: '#fff7ed', border: '1px solid #fed7aa' }}>
           <Ban size={16} color="#ea580c" />
@@ -413,6 +461,11 @@ function TeacherMarkAttendance() {
           </div>
         </div>
       </div>
+
+      {/* ── New Students Alert for Teachers ── */}
+      {alreadySubmitted && (
+        <NewStudentsAlert existingRecord={existingRecord} currentStudents={students} />
+      )}
 
       {alreadySubmitted && (
         <div className="alert alert-success" style={{ marginBottom: 16 }}>
@@ -467,16 +520,43 @@ function TeacherMarkAttendance() {
                 const submittedStatus = existingRecord?.records?.find(
                   r => r.student?._id?.toString() === s._id?.toString() || r.student?.toString() === s._id?.toString()
                 )?.status;
+
+                // Check if this student was added after submission
+                const isNewStudent = alreadySubmitted && !submittedStatus;
                 const currentStatus = alreadySubmitted ? submittedStatus : records[s._id];
+
                 return (
-                  <tr key={s._id} style={{ background: canSubmit && records[s._id] ? 'rgba(26,47,94,0.02)' : undefined }}>
+                  <tr key={s._id} style={{
+                    background: isNewStudent
+                      ? 'linear-gradient(135deg, #fefce8, #fef9c3)'
+                      : canSubmit && records[s._id] ? 'rgba(26,47,94,0.02)' : undefined,
+                    borderLeft: isNewStudent ? '3px solid #fbbf24' : undefined,
+                  }}>
                     <td style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>{idx + 1}</td>
-                    <td style={{ fontWeight: 600, fontSize: '0.875rem' }}>{s.name}</td>
+                    <td style={{ fontWeight: 600, fontSize: '0.875rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {s.name}
+                        {isNewStudent && (
+                          <span style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 3,
+                            padding: '1px 7px', borderRadius: 99,
+                            background: '#fef3c7', border: '1px solid #fbbf24',
+                            fontSize: '0.62rem', fontWeight: 800, color: '#92400e',
+                          }}>
+                            <Star size={8} fill="#f59e0b" color="#f59e0b" /> NEW
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td style={{ fontSize: '0.82rem', color: 'var(--color-text-secondary)' }}>
                       {['PreKG', 'LKG', 'UKG'].includes(s.grade) ? s.grade : `Std ${s.grade}`}
                     </td>
                     <td>
-                      {alreadySubmitted ? (
+                      {isNewStudent ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, background: '#fef3c7', color: '#92400e', fontSize: '0.73rem', fontWeight: 700 }}>
+                          ⚠ Not Recorded
+                        </span>
+                      ) : alreadySubmitted ? (
                         <StatusBadge status={currentStatus} />
                       ) : canSubmit ? (
                         <div style={{ display: 'flex', gap: 5 }}>
@@ -719,7 +799,6 @@ function StaffAttendancePanel({ type }) {
 
   return (
     <div>
-      {/* Controls row */}
       <div style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 180px', minWidth: 180 }}>
           <DateInput label="Date" value={date} onChange={setDate} max={todayIST}
@@ -737,7 +816,6 @@ function StaffAttendancePanel({ type }) {
         </button>
       </div>
 
-      {/* Summary strip */}
       {markedCount > 0 && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
           {[
@@ -753,7 +831,6 @@ function StaffAttendancePanel({ type }) {
         </div>
       )}
 
-      {/* Clean table */}
       <div style={{ border: '1px solid var(--color-border)', borderRadius: 12, overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
@@ -786,7 +863,6 @@ function StaffAttendancePanel({ type }) {
                     background: isExpanded ? '#fafbff' : 'white',
                     transition: 'background 0.15s',
                   }}>
-                    {/* Name */}
                     <td style={{ padding: '12px 16px', verticalAlign: 'middle' }}>
                       <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>{e.name}</div>
                       <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
@@ -794,8 +870,6 @@ function StaffAttendancePanel({ type }) {
                         {existing && <span style={{ marginLeft: 6, color: '#16a34a', fontWeight: 700 }}>· Saved</span>}
                       </div>
                     </td>
-
-                    {/* Class / Role */}
                     <td style={{ padding: '12px', verticalAlign: 'middle' }}>
                       <span style={{ fontSize: '0.82rem', color: 'var(--color-text-secondary)' }}>
                         {isTeacher
@@ -806,8 +880,6 @@ function StaffAttendancePanel({ type }) {
                         <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 2 }}>{e.shift}</div>
                       )}
                     </td>
-
-                    {/* Status buttons */}
                     <td style={{ padding: '8px 12px', verticalAlign: 'middle' }}>
                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                         {OPTIONS.map(opt => (
@@ -825,8 +897,6 @@ function StaffAttendancePanel({ type }) {
                         ))}
                       </div>
                     </td>
-
-                    {/* Expand toggle */}
                     <td style={{ padding: '8px 16px', verticalAlign: 'middle', textAlign: 'right' }}>
                       <button
                         onClick={() => setExpandedId(isExpanded ? null : e._id)}
@@ -842,7 +912,6 @@ function StaffAttendancePanel({ type }) {
                     </td>
                   </tr>
 
-                  {/* Expanded row: times + remarks */}
                   {isExpanded && (
                     <tr style={{ borderTop: '1px dashed var(--color-border)', background: '#f8fafd' }}>
                       <td colSpan={4} style={{ padding: '12px 16px 14px' }}>
@@ -901,7 +970,6 @@ function StaffAttendancePanel({ type }) {
         )}
       </div>
 
-      {/* Save footer */}
       {entityList.length > 0 && (
         <div style={{ marginTop: 14, display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
           <button className="btn btn-secondary" onClick={() => setStatuses({})}>
@@ -925,7 +993,6 @@ function AdminStudentAttendance() {
   const [dateFilter, setDateFilter] = useState(getTodayIST());
   const [modifyRecord, setModifyRecord] = useState(null);
   const [historyRecord, setHistoryRecord] = useState(null);
-  const [showExport, setShowExport] = useState(false);
   const [page, setPage] = useState(1);
   const qc = useQueryClient();
 
@@ -978,11 +1045,6 @@ function AdminStudentAttendance() {
           <button className="btn btn-secondary btn-sm" onClick={() => refetch()}>
             <RefreshCw size={14} className={isFetching ? 'spin' : ''} />
           </button>
-          {allRecords.length > 0 && (
-            <button className="btn btn-secondary btn-sm" onClick={() => setShowExport(true)}>
-              <Download size={14} /> Export
-            </button>
-          )}
         </div>
       </div>
 
@@ -1035,9 +1097,30 @@ function AdminStudentAttendance() {
                       const absent  = rec.records?.filter(r => r.status === 'absent').length || 0;
                       const total   = present + absent;
                       const rate    = total > 0 ? Math.round((present / total) * 100) : 0;
+
+                      // Check if this class has students assigned that aren't in the record
+                      const classObj = (allClasses || []).find(c => c._id?.toString() === rec.class?._id?.toString());
+                      const recordedStudentIds = new Set((rec.records || []).map(r => r.student?._id?.toString() || r.student?.toString()));
+                      // We'd need class students here — show indicator if mismatch detected
+                      const hasNewStudents = classObj && classObj.studentCount > rec.records?.length;
+
                       return (
-                        <tr key={rec._id}>
-                          <td style={{ fontWeight: 600 }}>{rec.class?.name}</td>
+                        <tr key={rec._id} style={{ background: hasNewStudents ? 'linear-gradient(135deg, #fffbeb, white)' : undefined }}>
+                          <td>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span style={{ fontWeight: 600 }}>{rec.class?.name}</span>
+                              {hasNewStudents && (
+                                <span style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: 3,
+                                  padding: '1px 7px', borderRadius: 99,
+                                  background: '#fef3c7', border: '1px solid #fbbf24',
+                                  fontSize: '0.62rem', fontWeight: 800, color: '#92400e',
+                                }}>
+                                  <UserPlus size={9} /> New Students
+                                </span>
+                              )}
+                            </div>
+                          </td>
                           <td><span className={`badge cat-${rec.class?.category}`}>{rec.class?.category}</span></td>
                           <td style={{ color: 'var(--color-text-secondary)', fontSize: '0.8rem' }}>{rec.submittedByName}</td>
                           <td style={{ textAlign: 'center' }}><span style={{ color: '#16a34a', fontWeight: 700 }}>{present}</span></td>
@@ -1304,10 +1387,16 @@ function AdminSubmitOnBehalf() {
       </div>
 
       {selectedClassId && alreadySubmitted && (
-        <div className="alert alert-warning" style={{ marginBottom: 16 }}>
-          <AlertCircle size={15} style={{ flexShrink: 0 }} />
-          <div>Already submitted. Use <strong>Manage</strong> tab to modify.</div>
-        </div>
+        <>
+          <div className="alert alert-warning" style={{ marginBottom: 16 }}>
+            <AlertCircle size={15} style={{ flexShrink: 0 }} />
+            <div>Already submitted. Use <strong>Manage</strong> tab to modify.</div>
+          </div>
+          {/* Show new students alert for admin too */}
+          {classData && (
+            <NewStudentsAlert existingRecord={existingRecord} currentStudents={students} />
+          )}
+        </>
       )}
 
       {selectedClassId && classData && !alreadySubmitted && (
@@ -1375,11 +1464,287 @@ function AdminSubmitOnBehalf() {
   );
 }
 
+// ─── Editor: Submit Student Attendance ────────────────────────────
+// Editors can submit for any class, but ONLY if attendance hasn't been submitted
+// yet for that class/date. They cannot modify existing records (backend enforces this too).
+function EditorStudentAttendance() {
+  const { vbsYear } = useActiveYear();
+  const qc = useQueryClient();
+  const [date, setDate] = useState(getTodayIST());
+  const [selectedClassId, setSelectedClassId] = useState('');
+  const [records, setRecords] = useState({});
+  const todayIST = getTodayIST();
+
+  const { data: windowData } = useQuery({
+    queryKey: ['window-status'],
+    queryFn: () => attendanceAPI.getWindowStatus().then(r => r.data?.data),
+    refetchInterval: 60000,
+  });
+
+  const { data: activeSettings } = useQuery({
+    queryKey: ['active-settings'],
+    queryFn: () => settingsAPI.getActive().then(r => r.data?.data),
+  });
+
+  const { data: classes } = useQuery({
+    queryKey: ['classes', vbsYear],
+    queryFn: () => classesAPI.getAll({ year: vbsYear }),
+    select: d => d.data?.data || [],
+    enabled: !!vbsYear,
+  });
+
+  const { data: classData } = useQuery({
+    queryKey: ['class-full', selectedClassId],
+    queryFn: () => classesAPI.getOne(selectedClassId).then(r => r.data?.data),
+    enabled: !!selectedClassId,
+  });
+
+  const { data: existingRecord, isLoading: checkingExisting } = useQuery({
+    queryKey: ['attendance-check-editor', date, selectedClassId],
+    queryFn: () => attendanceAPI.getStudentAttendance({ date, classId: selectedClassId }).then(r => r.data?.data?.[0]),
+    enabled: !!selectedClassId,
+  });
+
+  const submitMutation = useMutation({
+    mutationFn: (data) => attendanceAPI.submitStudentAttendance(data),
+    onSuccess: () => {
+      toast.success('Attendance submitted successfully!');
+      qc.invalidateQueries(['attendance-check-editor']);
+      setRecords({});
+      setSelectedClassId('');
+    },
+    onError: (err) => toast.error(err.response?.data?.message || 'Submission failed'),
+  });
+
+  const students = classData?.students || [];
+  const alreadySubmitted = !!existingRecord;
+  const isToday = date === todayIST;
+  const windowStopped = windowData?.stopped;
+  const windowOpen = windowData?.allowed && !windowStopped;
+  // Editors can submit today's attendance within the window only (same as teachers)
+  const canSubmit = isToday && windowOpen && !alreadySubmitted && !!selectedClassId;
+
+  const presentCount = Object.values(records).filter(v => v === 'present').length;
+  const markedCount  = Object.keys(records).length;
+  const unmarked     = students.length - markedCount;
+  const markAll = (status) => { const all = {}; students.forEach(s => { all[s._id] = status; }); setRecords(all); };
+
+  return (
+    <div>
+      {/* Restrictions info */}
+      <div style={{
+        background: 'linear-gradient(135deg, #eff6ff, #f0f9ff)',
+        border: '1px solid #bfdbfe',
+        borderRadius: 12, padding: '12px 16px', marginBottom: 16,
+        display: 'flex', gap: 10, alignItems: 'flex-start',
+      }}>
+        <Info size={15} color="#2563eb" style={{ flexShrink: 0, marginTop: 1 }} />
+        <div style={{ fontSize: '0.82rem', color: '#1e40af', lineHeight: 1.5 }}>
+          <strong>Editor Restrictions:</strong> You can submit attendance for any class within the attendance window.
+          Attendance can only be submitted once per class per day — modifications require admin access.
+          You can only submit for <strong>today</strong> during the open window.
+        </div>
+      </div>
+
+      {/* Window Status */}
+      {windowStopped ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderRadius: 10, marginBottom: 16, background: '#fff7ed', border: '1px solid #fed7aa' }}>
+          <Ban size={16} color="#ea580c" />
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '0.845rem', color: '#9a3412' }}>Attendance Window Stopped</div>
+            <div style={{ fontSize: '0.78rem', color: '#c2410c', marginTop: 2 }}>{windowData?.message?.replace('⛔ ', '')}</div>
+          </div>
+        </div>
+      ) : (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px',
+          borderRadius: 10, marginBottom: 16,
+          background: windowOpen ? '#f0fdf4' : '#fef2f2',
+          border: `1px solid ${windowOpen ? '#bbf7d0' : '#fecaca'}`,
+        }}>
+          <span style={{ padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 800, background: windowOpen ? '#16a34a' : '#dc2626', color: 'white' }}>
+            {windowOpen ? 'Window OPEN' : 'Window CLOSED'}
+          </span>
+          <span style={{ fontSize: '0.82rem', color: 'var(--color-text-secondary)', flex: 1 }}>{windowData?.message || 'Loading...'}</span>
+          {windowOpen && windowData?.minutesRemaining > 0 && (
+            <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#92400e', background: '#fef3c7', padding: '3px 10px', borderRadius: 99 }}>
+              <Clock size={13} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+              {windowData.minutesRemaining} min remaining
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Controls */}
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 180px', minWidth: 180 }}>
+          <DateInput
+            label="Attendance Date"
+            value={date}
+            onChange={(v) => { setDate(v); setRecords({}); setSelectedClassId(''); }}
+            max={todayIST}
+            vbsStartDate={activeSettings?.dates?.startDate?.slice(0, 10)}
+            vbsEndDate={activeSettings?.dates?.endDate?.slice(0, 10)}
+            showVBSDays={true}
+          />
+        </div>
+        <div style={{ flex: '1 1 200px', minWidth: 180 }}>
+          <label className="form-label">Select Class</label>
+          <select
+            className="form-select"
+            value={selectedClassId}
+            onChange={e => { setSelectedClassId(e.target.value); setRecords({}); }}
+            disabled={!isToday || windowStopped}
+          >
+            <option value="">Choose a class...</option>
+            {(classes || []).map(c => <option key={c._id} value={c._id}>{c.name} ({c.category})</option>)}
+          </select>
+        </div>
+        {canSubmit && students.length > 0 && (
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button className="btn btn-secondary btn-sm" onClick={() => markAll('present')}><Check size={14} /> All Present</button>
+            <button className="btn btn-secondary btn-sm" onClick={() => markAll('absent')}><X size={14} /> All Absent</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setRecords({})}><RefreshCw size={14} /></button>
+          </div>
+        )}
+      </div>
+
+      {/* Date restriction notice */}
+      {!isToday && (
+        <div className="alert alert-warning" style={{ marginBottom: 16 }}>
+          <AlertCircle size={15} style={{ flexShrink: 0 }} />
+          <div>You can only submit attendance for <strong>today</strong>. Select today's date to proceed.</div>
+        </div>
+      )}
+
+      {/* Already submitted */}
+      {selectedClassId && alreadySubmitted && !checkingExisting && (
+        <div className="alert alert-info" style={{ marginBottom: 16 }}>
+          <CheckSquare size={15} style={{ flexShrink: 0 }} />
+          <div>
+            Attendance for <strong>{classData?.name}</strong> on <strong>{formatDisplayDate(date)}</strong> has already been submitted by <strong>{existingRecord?.submittedByName}</strong>.
+            To modify it, contact an admin.
+          </div>
+        </div>
+      )}
+
+      {/* Student Table */}
+      {selectedClassId && classData && (
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <span className="card-title">{classData.name}</span>
+              <span style={{ marginLeft: 8, fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}>
+                {classData.category} · {students.length} students
+              </span>
+            </div>
+            {markedCount > 0 && canSubmit && (
+              <div style={{ display: 'flex', gap: 10, fontSize: '0.82rem' }}>
+                <span style={{ color: '#16a34a', fontWeight: 700 }}>✓ {presentCount} P</span>
+                <span style={{ color: '#dc2626', fontWeight: 700 }}>✗ {markedCount - presentCount} A</span>
+                {unmarked > 0 && <span style={{ color: 'var(--color-text-muted)' }}>{unmarked} left</span>}
+              </div>
+            )}
+          </div>
+
+          {students.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-secondary)', fontSize: '0.875rem' }}>
+              <Users size={28} style={{ margin: '0 auto 8px', display: 'block', color: 'var(--color-text-muted)' }} />
+              No students assigned to this class yet.
+            </div>
+          ) : (
+            <>
+              <div className="table-container">
+                <table style={{ minWidth: 380 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: 36 }}>#</th>
+                      <th>Name</th>
+                      <th style={{ width: 70 }}>Grade</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {students.map((s, idx) => {
+                      const submittedStatus = existingRecord?.records?.find(
+                        r => r.student?._id?.toString() === s._id?.toString() || r.student?.toString() === s._id?.toString()
+                      )?.status;
+                      const currentStatus = alreadySubmitted ? submittedStatus : records[s._id];
+
+                      return (
+                        <tr key={s._id} style={{
+                          background: canSubmit && records[s._id] ? 'rgba(26,47,94,0.02)' : undefined,
+                        }}>
+                          <td style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>{idx + 1}</td>
+                          <td style={{ fontWeight: 600, fontSize: '0.875rem' }}>{s.name}</td>
+                          <td style={{ fontSize: '0.82rem', color: 'var(--color-text-secondary)' }}>
+                            {['PreKG', 'LKG', 'UKG'].includes(s.grade) ? s.grade : `Std ${s.grade}`}
+                          </td>
+                          <td>
+                            {alreadySubmitted ? (
+                              <StatusBadge status={currentStatus} />
+                            ) : canSubmit ? (
+                              <div style={{ display: 'flex', gap: 5 }}>
+                                {['present', 'absent'].map(st => (
+                                  <button key={st} onClick={() => setRecords(r => ({ ...r, [s._id]: st }))}
+                                    style={{
+                                      padding: '4px 10px', borderRadius: 7, border: 'none', cursor: 'pointer',
+                                      fontWeight: 700, fontSize: '0.75rem', transition: 'all 0.12s',
+                                      background: currentStatus === st ? (st === 'present' ? '#16a34a' : '#dc2626') : 'var(--color-bg)',
+                                      color: currentStatus === st ? 'white' : 'var(--color-text-secondary)',
+                                    }}>
+                                    {st === 'present' ? '✓' : '✗'}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <span style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>
+                                {!isToday ? 'Today only' : windowStopped ? 'Window stopped' : !windowOpen ? 'Window closed' : '—'}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {canSubmit && (
+                <div style={{ padding: '12px 16px', borderTop: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)' }}>
+                    {unmarked > 0
+                      ? <span style={{ color: '#d97706' }}>⚠️ {unmarked} unmarked → will be marked Absent</span>
+                      : <span style={{ color: '#16a34a' }}>✓ All {students.length} marked</span>
+                    }
+                  </div>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => {
+                      const recs = students.map(s => ({ studentId: s._id, status: records[s._id] || 'absent' }));
+                      submitMutation.mutate({ date, classId: selectedClassId, records: recs });
+                    }}
+                    disabled={submitMutation.isPending}
+                  >
+                    {submitMutation.isPending
+                      ? <><div className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> Submitting...</>
+                      : <><Save size={15} /> Submit Attendance</>
+                    }
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── MAIN ATTENDANCE PAGE ──────────────────────────────────────────
 export default function AttendancePage({ initialTab }) {
   const { user } = useAuth();
 
-  // Fetch active settings for window stop/resume control
   const { data: activeSettings } = useQuery({
     queryKey: ['active-settings'],
     queryFn: () => settingsAPI.getActive().then(r => r.data?.data),
@@ -1387,21 +1752,21 @@ export default function AttendancePage({ initialTab }) {
 
   const tabsByRole = {
     admin: [
-      { id: 'manage',       label: '📋 Student Records' },
+      { id: 'manage',        label: '📋 Student Records' },
       { id: 'submit-behalf', label: '✏️ Submit (Admin)' },
-      { id: 'teachers',     label: '👩‍🏫 Teacher Attendance' },
-      { id: 'volunteers',   label: '🤝 Volunteer Attendance' },
+      { id: 'teachers',      label: '👩‍🏫 Teacher Attendance' },
+      { id: 'volunteers',    label: '🤝 Volunteer Attendance' },
     ],
+    // ── Change 2: Editor only gets student attendance submit, NO teacher/volunteer tabs
     editor: [
-      { id: 'teachers',   label: '👩‍🏫 Teacher Attendance' },
-      { id: 'volunteers', label: '🤝 Volunteer Attendance' },
+      { id: 'submit-student', label: '✏️ Submit Student Attendance' },
     ],
     viewer: [
       { id: 'manage', label: '📋 Student Records' },
     ],
     teacher: [
-      { id: 'submit',       label: '✏️ Mark Attendance' },
-      { id: 'history',      label: '📅 Submission History' },
+      { id: 'submit',        label: '✏️ Mark Attendance' },
+      { id: 'history',       label: '📅 Submission History' },
       { id: 'my-attendance', label: '👤 My Attendance' },
     ],
   };
@@ -1420,12 +1785,16 @@ export default function AttendancePage({ initialTab }) {
         <div>
           <h1 className="page-title">Attendance</h1>
           <p className="page-subtitle">
-            {user.role === 'teacher' ? 'Mark attendance and view your records' : 'Manage daily attendance'}
+            {user.role === 'teacher'
+              ? 'Mark attendance and view your records'
+              : user.role === 'editor'
+              ? 'Submit student attendance within the open window'
+              : 'Manage daily attendance'}
           </p>
         </div>
       </div>
 
-      {/* Window Banner — always visible for admin on relevant tabs */}
+      {/* Window Banner — admin and teacher */}
       {['admin', 'teacher'].includes(user.role) && (
         <WindowBanner
           user={user}
@@ -1435,29 +1804,37 @@ export default function AttendancePage({ initialTab }) {
       )}
 
       {/* Tab bar */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 20, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
-        {tabs.map(tab => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-            style={{
-              padding: '8px 14px', borderRadius: 10,
-              border: `1.5px solid ${activeTab === tab.id ? 'var(--color-primary)' : 'var(--color-border)'}`,
-              background: activeTab === tab.id ? 'var(--color-primary)' : 'white',
-              color: activeTab === tab.id ? 'white' : 'var(--color-text-secondary)',
-              cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 600,
-              fontSize: '0.82rem', whiteSpace: 'nowrap', transition: 'all 0.15s',
-            }}>
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      {tabs.length > 1 && (
+        <div style={{ display: 'flex', gap: 4, marginBottom: 20, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
+          {tabs.map(tab => (
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+              style={{
+                padding: '8px 14px', borderRadius: 10,
+                border: `1.5px solid ${activeTab === tab.id ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                background: activeTab === tab.id ? 'var(--color-primary)' : 'white',
+                color: activeTab === tab.id ? 'white' : 'var(--color-text-secondary)',
+                cursor: 'pointer', fontFamily: 'var(--font-sans)', fontWeight: 600,
+                fontSize: '0.82rem', whiteSpace: 'nowrap', transition: 'all 0.15s',
+              }}>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
 
-      {activeTab === 'submit'        && <TeacherMarkAttendance />}
-      {activeTab === 'history'       && <TeacherAttendanceHistory />}
-      {activeTab === 'my-attendance' && <MyOwnAttendanceRecords />}
-      {activeTab === 'manage'        && <AdminStudentAttendance />}
-      {activeTab === 'submit-behalf' && <AdminSubmitOnBehalf />}
-      {activeTab === 'teachers'      && <StaffAttendancePanel type="teacher" />}
-      {activeTab === 'volunteers'    && <StaffAttendancePanel type="volunteer" />}
+      {/* ── Teacher tabs ── */}
+      {activeTab === 'submit'         && <TeacherMarkAttendance />}
+      {activeTab === 'history'        && <TeacherAttendanceHistory />}
+      {activeTab === 'my-attendance'  && <MyOwnAttendanceRecords />}
+
+      {/* ── Admin tabs ── */}
+      {activeTab === 'manage'         && <AdminStudentAttendance />}
+      {activeTab === 'submit-behalf'  && <AdminSubmitOnBehalf />}
+      {activeTab === 'teachers'       && <StaffAttendancePanel type="teacher" />}
+      {activeTab === 'volunteers'     && <StaffAttendancePanel type="volunteer" />}
+
+      {/* ── Editor tab ── */}
+      {activeTab === 'submit-student' && <EditorStudentAttendance />}
     </div>
   );
 }
