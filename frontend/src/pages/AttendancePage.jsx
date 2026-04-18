@@ -13,7 +13,7 @@ import api from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useActiveYear } from '../contexts/ActiveYearContext';
 import DateInput from '../components/Dateinput';
-import { MyOwnAttendanceRecords } from './Attendancerecordsview';
+import { MyOwnAttendanceRecords, TeacherAttendanceRecords, VolunteerAttendanceRecords } from './Attendancerecordsview';
 import toast from 'react-hot-toast';
 
 // ─── Helpers ──────────────────────────────────────────────────────
@@ -64,8 +64,9 @@ const RateBar = ({ rate }) => (
   </div>
 );
 
-// ─── New Students Alert Banner ──────────────────────────────────────
-// Shows when a class already submitted attendance but has new students assigned after submission
+// ─── FIX 1: New Students Alert Banner ─────────────────────────────
+// Uses submittedStudentIds from the attendance record to accurately detect
+// students added after the attendance was submitted.
 function NewStudentsAlert({ existingRecord, currentStudents }) {
   if (!existingRecord || !currentStudents?.length) return null;
 
@@ -462,7 +463,7 @@ function TeacherMarkAttendance() {
         </div>
       </div>
 
-      {/* ── New Students Alert for Teachers ── */}
+      {/* FIX 1: New Students Alert uses accurate submitted vs current comparison */}
       {alreadySubmitted && (
         <NewStudentsAlert existingRecord={existingRecord} currentStudents={students} />
       )}
@@ -521,7 +522,6 @@ function TeacherMarkAttendance() {
                   r => r.student?._id?.toString() === s._id?.toString() || r.student?.toString() === s._id?.toString()
                 )?.status;
 
-                // Check if this student was added after submission
                 const isNewStudent = alreadySubmitted && !submittedStatus;
                 const currentStatus = alreadySubmitted ? submittedStatus : records[s._id];
 
@@ -694,7 +694,7 @@ function TeacherAttendanceHistory() {
   );
 }
 
-// ─── Staff Attendance Panel ─── Clean Table Design ─────────────────
+// ─── Staff Attendance Panel ─────────────────────────────────────────
 function StaffAttendancePanel({ type }) {
   const qc = useQueryClient();
   const [date, setDate] = useState(getTodayIST());
@@ -854,7 +854,6 @@ function StaffAttendancePanel({ type }) {
               const existing      = existingRecords?.[e._id];
               const currentStatus = statuses[e._id];
               const isExpanded    = expandedId === e._id;
-              const statusOpt     = OPTIONS.find(o => o.val === currentStatus);
 
               return (
                 <React.Fragment key={e._id}>
@@ -1019,6 +1018,18 @@ function AdminStudentAttendance() {
     onError: (err) => toast.error(err.response?.data?.message || 'Failed'),
   });
 
+  // FIX 1: Fetch class details for accurate new-student detection
+  // We query each class's live student list only when needed (via classesAPI.getOne)
+  // Build a map of classId -> live student count from the classes list
+  // The actual per-record comparison uses records.records vs live class students
+  // For the table indicator, compare records.records.length vs class.studentCount (from classes list)
+  // studentCount in classesAPI.getAll is computed via aggregation and is accurate
+  const classStudentCountMap = React.useMemo(() => {
+    const map = {};
+    (allClasses || []).forEach(c => { map[c._id?.toString()] = c.studentCount || 0; });
+    return map;
+  }, [allClasses]);
+
   const pageSize  = 20;
   const allRecords = records || [];
   const paged     = allRecords.slice((page - 1) * pageSize, page * pageSize);
@@ -1026,11 +1037,6 @@ function AdminStudentAttendance() {
   const totalPresent = allRecords.reduce((sum, r) => sum + (r.records?.filter(x => x.status === 'present').length || 0), 0);
   const totalAbsent  = allRecords.reduce((sum, r) => sum + (r.records?.filter(x => x.status === 'absent').length || 0), 0);
   const overallRate  = (totalPresent + totalAbsent) > 0 ? Math.round((totalPresent / (totalPresent + totalAbsent)) * 100) : 0;
-
-  const classesWithCounts = (allClasses || []).map(cls => ({
-    ...cls,
-    studentCount: allRecords.find(r => r.class?._id?.toString() === cls._id?.toString())?.records?.length || cls.studentCount || 0,
-  }));
 
   return (
     <div>
@@ -1048,7 +1054,7 @@ function AdminStudentAttendance() {
         </div>
       </div>
 
-      <PendingClassesPanel date={dateFilter} vbsYear={vbsYear} classes={classesWithCounts} submittedRecords={allRecords} />
+      <PendingClassesPanel date={dateFilter} vbsYear={vbsYear} classes={allClasses} submittedRecords={allRecords} />
 
       {allRecords.length > 0 && (
         <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -1098,11 +1104,13 @@ function AdminStudentAttendance() {
                       const total   = present + absent;
                       const rate    = total > 0 ? Math.round((present / total) * 100) : 0;
 
-                      // Check if this class has students assigned that aren't in the record
-                      const classObj = (allClasses || []).find(c => c._id?.toString() === rec.class?._id?.toString());
-                      const recordedStudentIds = new Set((rec.records || []).map(r => r.student?._id?.toString() || r.student?.toString()));
-                      // We'd need class students here — show indicator if mismatch detected
-                      const hasNewStudents = classObj && classObj.studentCount > rec.records?.length;
+                      // FIX 1: Accurate new-student detection
+                      // Compare live studentCount from classes list vs recorded count
+                      // studentCount from classesAPI.getAll is computed via DB aggregation (accurate)
+                      const classId = rec.class?._id?.toString();
+                      const liveCount = classStudentCountMap[classId] ?? null;
+                      const recordedCount = rec.records?.length ?? 0;
+                      const hasNewStudents = liveCount !== null && liveCount > recordedCount;
 
                       return (
                         <tr key={rec._id} style={{ background: hasNewStudents ? 'linear-gradient(135deg, #fffbeb, white)' : undefined }}>
@@ -1116,7 +1124,7 @@ function AdminStudentAttendance() {
                                   background: '#fef3c7', border: '1px solid #fbbf24',
                                   fontSize: '0.62rem', fontWeight: 800, color: '#92400e',
                                 }}>
-                                  <UserPlus size={9} /> New Students
+                                  <UserPlus size={9} /> {liveCount - recordedCount} New
                                 </span>
                               )}
                             </div>
@@ -1392,7 +1400,6 @@ function AdminSubmitOnBehalf() {
             <AlertCircle size={15} style={{ flexShrink: 0 }} />
             <div>Already submitted. Use <strong>Manage</strong> tab to modify.</div>
           </div>
-          {/* Show new students alert for admin too */}
           {classData && (
             <NewStudentsAlert existingRecord={existingRecord} currentStudents={students} />
           )}
@@ -1465,8 +1472,6 @@ function AdminSubmitOnBehalf() {
 }
 
 // ─── Editor: Submit Student Attendance ────────────────────────────
-// Editors can submit for any class, but ONLY if attendance hasn't been submitted
-// yet for that class/date. They cannot modify existing records (backend enforces this too).
 function EditorStudentAttendance() {
   const { vbsYear } = useActiveYear();
   const qc = useQueryClient();
@@ -1521,7 +1526,6 @@ function EditorStudentAttendance() {
   const isToday = date === todayIST;
   const windowStopped = windowData?.stopped;
   const windowOpen = windowData?.allowed && !windowStopped;
-  // Editors can submit today's attendance within the window only (same as teachers)
   const canSubmit = isToday && windowOpen && !alreadySubmitted && !!selectedClassId;
 
   const presentCount = Object.values(records).filter(v => v === 'present').length;
@@ -1531,7 +1535,6 @@ function EditorStudentAttendance() {
 
   return (
     <div>
-      {/* Restrictions info */}
       <div style={{
         background: 'linear-gradient(135deg, #eff6ff, #f0f9ff)',
         border: '1px solid #bfdbfe',
@@ -1546,7 +1549,6 @@ function EditorStudentAttendance() {
         </div>
       </div>
 
-      {/* Window Status */}
       {windowStopped ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderRadius: 10, marginBottom: 16, background: '#fff7ed', border: '1px solid #fed7aa' }}>
           <Ban size={16} color="#ea580c" />
@@ -1575,7 +1577,6 @@ function EditorStudentAttendance() {
         </div>
       )}
 
-      {/* Controls */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 180px', minWidth: 180 }}>
           <DateInput
@@ -1609,7 +1610,6 @@ function EditorStudentAttendance() {
         )}
       </div>
 
-      {/* Date restriction notice */}
       {!isToday && (
         <div className="alert alert-warning" style={{ marginBottom: 16 }}>
           <AlertCircle size={15} style={{ flexShrink: 0 }} />
@@ -1617,7 +1617,6 @@ function EditorStudentAttendance() {
         </div>
       )}
 
-      {/* Already submitted */}
       {selectedClassId && alreadySubmitted && !checkingExisting && (
         <div className="alert alert-info" style={{ marginBottom: 16 }}>
           <CheckSquare size={15} style={{ flexShrink: 0 }} />
@@ -1628,7 +1627,6 @@ function EditorStudentAttendance() {
         </div>
       )}
 
-      {/* Student Table */}
       {selectedClassId && classData && (
         <div className="card">
           <div className="card-header">
@@ -1750,19 +1748,23 @@ export default function AttendancePage({ initialTab }) {
     queryFn: () => settingsAPI.getActive().then(r => r.data?.data),
   });
 
+  // FIX 2: Added teacher-records and volunteer-records tabs for export functionality
   const tabsByRole = {
     admin: [
-      { id: 'manage',        label: '📋 Student Records' },
-      { id: 'submit-behalf', label: '✏️ Submit (Admin)' },
-      { id: 'teachers',      label: '👩‍🏫 Teacher Attendance' },
-      { id: 'volunteers',    label: '🤝 Volunteer Attendance' },
+      { id: 'manage',           label: '📋 Student Records' },
+      { id: 'submit-behalf',    label: '✏️ Submit (Admin)' },
+      { id: 'teachers',         label: '👩‍🏫 Teacher Attendance' },
+      { id: 'volunteers',       label: '🤝 Volunteer Attendance' },
+      { id: 'teacher-records',  label: '📊 Teacher Records' },
+      { id: 'volunteer-records',label: '📊 Volunteer Records' },
     ],
-    // ── Change 2: Editor only gets student attendance submit, NO teacher/volunteer tabs
     editor: [
       { id: 'submit-student', label: '✏️ Submit Student Attendance' },
     ],
     viewer: [
-      { id: 'manage', label: '📋 Student Records' },
+      { id: 'manage',           label: '📋 Student Records' },
+      { id: 'teacher-records',  label: '📊 Teacher Records' },
+      { id: 'volunteer-records',label: '📊 Volunteer Records' },
     ],
     teacher: [
       { id: 'submit',        label: '✏️ Mark Attendance' },
@@ -1832,6 +1834,9 @@ export default function AttendancePage({ initialTab }) {
       {activeTab === 'submit-behalf'  && <AdminSubmitOnBehalf />}
       {activeTab === 'teachers'       && <StaffAttendancePanel type="teacher" />}
       {activeTab === 'volunteers'     && <StaffAttendancePanel type="volunteer" />}
+      {/* FIX 2: Export/records tabs now included */}
+      {activeTab === 'teacher-records'  && <TeacherAttendanceRecords />}
+      {activeTab === 'volunteer-records' && <VolunteerAttendanceRecords />}
 
       {/* ── Editor tab ── */}
       {activeTab === 'submit-student' && <EditorStudentAttendance />}
