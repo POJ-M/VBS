@@ -57,7 +57,6 @@ const loginLimiter = rateLimit({
   message: { success: false, message: 'Too many login attempts. Try again in 15 minutes.' },
   standardHeaders: true,
   legacyHeaders: false,
-  // FIX: Use a key generator that works behind proxies
   keyGenerator: (req) => req.ip,
 });
 
@@ -147,8 +146,13 @@ router.delete('/classes/:id', protect, adminOnly, mutationLimiter, deleteClass);
 // ─── ATTENDANCE ──────────────────────────────────────────────────────
 router.get('/attendance/window-status', protect, getWindowStatus);
 router.get('/attendance/today-summary', protect, authorize('admin', 'editor', 'viewer'), getTodaySummary);
-router.get('/attendance/students', protect, authorize('admin', 'viewer', 'teacher'), getStudentAttendance);
-router.post('/attendance/students', protect, authorize('admin', 'teacher'), mutationLimiter, submitStudentAttendance);
+
+// CHANGE 2: Added 'editor' to GET student attendance (view submitted records)
+router.get('/attendance/students', protect, authorize('admin', 'viewer', 'teacher', 'editor'), getStudentAttendance);
+
+// CHANGE 2: Added 'editor' to POST student attendance (submit within window, no modify)
+router.post('/attendance/students', protect, authorize('admin', 'teacher', 'editor'), mutationLimiter, submitStudentAttendance);
+
 router.put('/attendance/students/:id/modify', protect, adminOnly, mutationLimiter, modifyStudentAttendance);
 router.delete('/attendance/students/:id', protect, adminOnly, mutationLimiter, deleteStudentAttendance);
 router.get('/attendance/teachers', protect, authorize('admin', 'editor', 'viewer', 'teacher'), getTeacherAttendance);
