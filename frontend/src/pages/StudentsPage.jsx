@@ -1,12 +1,12 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Plus, Edit2, Trash2, Users, Search, ChevronLeft, ChevronRight,
   X, AlertCircle, BookOpen, CheckSquare, ArrowRight, Filter,
-  LayoutGrid, List, UserCheck, RefreshCw
+  LayoutGrid, List, UserCheck, RefreshCw, MapPin
 } from 'lucide-react';
-import { studentsAPI, classesAPI } from '../services/api';
+import { studentsAPI, classesAPI, reportsAPI } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useActiveYear } from '../contexts/ActiveYearContext';
 import { useConfirm } from '../hooks/useConfirm';
@@ -35,8 +35,48 @@ const defaultForm = {
   parentName: '', village: '', schoolName: '',
 };
 
+// ─── FIX 3: Village Input with Datalist Dropdown ──────────────────
+// Uses a native <datalist> for keyboard-accessible village suggestions.
+// Fetches the village list from the API (same endpoint used by VillageReport).
+// Falls back gracefully if the API call fails.
+function VillageInput({ value, onChange, vbsYear }) {
+  const { data: villageList } = useQuery({
+    queryKey: ['village-list', vbsYear],
+    queryFn: () => reportsAPI.getVillageList({ vbsYear }),
+    select: d => d.data?.data || [],
+    enabled: !!vbsYear,
+    staleTime: 5 * 60 * 1000, // 5 min cache — village list rarely changes
+  });
+
+  const datalistId = 'village-suggestions';
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <div style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', zIndex: 1 }}>
+        <MapPin size={14} color="var(--color-text-muted)" />
+      </div>
+      <input
+        list={datalistId}
+        className="form-input"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder="Type or select village"
+        style={{ paddingLeft: 32 }}
+        autoComplete="off"
+      />
+      <datalist id={datalistId}>
+        {(villageList || []).map(v => (
+          <option key={v.village || v._id} value={v.village || v._id}>
+            {v.village || v._id} ({v.count} student{v.count !== 1 ? 's' : ''})
+          </option>
+        ))}
+      </datalist>
+    </div>
+  );
+}
+
 // ─── Student Form Modal ────────────────────────────────────────────
-function StudentFormModal({ isOpen, onClose, editStudent, classes = [], onSuccess, userRole, loading }) {
+function StudentFormModal({ isOpen, onClose, editStudent, classes = [], onSuccess, userRole, loading, vbsYear }) {
   const [form, setForm] = useState(() => editStudent ? {
     name: editStudent.name || '',
     gender: editStudent.gender || '',
@@ -191,9 +231,14 @@ function StudentFormModal({ isOpen, onClose, editStudent, classes = [], onSucces
                 <label className="form-label">Parent / Guardian Name</label>
                 <input className="form-input" value={form.parentName} onChange={e => set('parentName', e.target.value)} placeholder="Parent's name" />
               </div>
+              {/* FIX 3: Village with datalist dropdown */}
               <div className="form-group">
                 <label className="form-label">Village / Location</label>
-                <input className="form-input" value={form.village} onChange={e => set('village', e.target.value)} placeholder="Village or area name" />
+                <VillageInput
+                  value={form.village}
+                  onChange={v => set('village', v)}
+                  vbsYear={vbsYear}
+                />
               </div>
               <div className="form-group" style={{ gridColumn: '1/-1' }}>
                 <label className="form-label">School Name</label>
@@ -505,18 +550,6 @@ function ClassRosterView({ classes, students, onAllocate, onBulkAllocate, isAdmi
                   <span className={`badge ${CATEGORY_COLOR[selectedClass.category]}`}>{selectedClass.category}</span>
                 </div>
               </div>
-              <div style={{ height: 40, width: 40, borderRadius: '50%', position: 'relative' }}>
-                <svg viewBox="0 0 36 36" style={{ transform: 'rotate(-90deg)' }}>
-                  <circle cx="18" cy="18" r="16" fill="none" stroke="var(--color-border)" strokeWidth="3" />
-                  <circle cx="18" cy="18" r="16" fill="none"
-                    stroke={classStudents.length >= selectedClass.capacity ? '#ef4444' : 'var(--color-primary)'}
-                    strokeWidth="3"
-                    strokeDasharray={`${(classStudents.length / selectedClass.capacity) * 100} 100`} />
-                </svg>
-                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', fontWeight: 800 }}>
-                  {Math.round((classStudents.length / selectedClass.capacity) * 100)}%
-                </div>
-              </div>
             </div>
           </div>
         )}
@@ -646,7 +679,7 @@ export default function StudentsPage() {
   const [filterGrade, setFilterGrade] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
   const [filterClass, setFilterClass] = useState('');
-  const [viewMode, setViewMode] = useState('list'); // 'list' | 'allocation'
+  const [viewMode, setViewMode] = useState('list');
   const [showForm, setShowForm] = useState(false);
   const [editStudent, setEditStudent] = useState(null);
   const [allocateStudent, setAllocateStudent] = useState(null);
@@ -664,7 +697,6 @@ export default function StudentsPage() {
     enabled: !!vbsYear,
   });
 
-  // For allocation view, fetch all students (no pagination)
   const { data: allStudentsData } = useQuery({
     queryKey: ['all-students-allocation', vbsYear],
     queryFn: () => studentsAPI.getAll({ limit: 500, vbsYear }),
@@ -684,6 +716,8 @@ export default function StudentsPage() {
     onSuccess: res => {
       qc.invalidateQueries(['students']);
       qc.invalidateQueries(['all-students-allocation']);
+      // Invalidate village list so new villages appear in dropdown
+      qc.invalidateQueries(['village-list']);
       const msg = res.data?.staged ? 'Student submitted for approval' : `Student created! ID: ${res.data?.data?.studentId}`;
       toast.success(msg);
       setShowForm(false);
@@ -697,6 +731,7 @@ export default function StudentsPage() {
     onSuccess: () => {
       qc.invalidateQueries(['students']);
       qc.invalidateQueries(['all-students-allocation']);
+      qc.invalidateQueries(['village-list']);
       toast.success('Student updated');
       setEditStudent(null);
     },
@@ -797,7 +832,6 @@ export default function StudentsPage() {
           <p className="page-subtitle">{total} students registered · VBS {vbsYear}</p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {/* View toggle */}
           {isAdmin && (
             <div style={{ display: 'flex', background: 'var(--color-bg)', borderRadius: 8, padding: 3, border: '1px solid var(--color-border)' }}>
               <button onClick={() => setViewMode('list')}
@@ -1023,6 +1057,7 @@ export default function StudentsPage() {
             classes={classes}
             userRole={user?.role}
             loading={createLoading || updateLoading}
+            vbsYear={vbsYear}
             onSuccess={form => {
               if (editStudent) handleUpdate({ id: editStudent._id, data: form });
               else handleCreate(form);
