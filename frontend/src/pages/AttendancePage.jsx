@@ -65,8 +65,6 @@ const RateBar = ({ rate }) => (
 );
 
 // ─── FIX 1: New Students Alert Banner ─────────────────────────────
-// Uses submittedStudentIds from the attendance record to accurately detect
-// students added after the attendance was submitted.
 function NewStudentsAlert({ existingRecord, currentStudents }) {
   if (!existingRecord || !currentStudents?.length) return null;
 
@@ -463,7 +461,6 @@ function TeacherMarkAttendance() {
         </div>
       </div>
 
-      {/* FIX 1: New Students Alert uses accurate submitted vs current comparison */}
       {alreadySubmitted && (
         <NewStudentsAlert existingRecord={existingRecord} currentStudents={students} />
       )}
@@ -1018,12 +1015,6 @@ function AdminStudentAttendance() {
     onError: (err) => toast.error(err.response?.data?.message || 'Failed'),
   });
 
-  // FIX 1: Fetch class details for accurate new-student detection
-  // We query each class's live student list only when needed (via classesAPI.getOne)
-  // Build a map of classId -> live student count from the classes list
-  // The actual per-record comparison uses records.records vs live class students
-  // For the table indicator, compare records.records.length vs class.studentCount (from classes list)
-  // studentCount in classesAPI.getAll is computed via aggregation and is accurate
   const classStudentCountMap = React.useMemo(() => {
     const map = {};
     (allClasses || []).forEach(c => { map[c._id?.toString()] = c.studentCount || 0; });
@@ -1104,9 +1095,6 @@ function AdminStudentAttendance() {
                       const total   = present + absent;
                       const rate    = total > 0 ? Math.round((present / total) * 100) : 0;
 
-                      // FIX 1: Accurate new-student detection
-                      // Compare live studentCount from classes list vs recorded count
-                      // studentCount from classesAPI.getAll is computed via DB aggregation (accurate)
                       const classId = rec.class?._id?.toString();
                       const liveCount = classStudentCountMap[classId] ?? null;
                       const recordedCount = rec.records?.length ?? 0;
@@ -1175,79 +1163,219 @@ function AdminStudentAttendance() {
   );
 }
 
-// ─── Modify Modal ──────────────────────────────────────────────────
+// ─── Modify Modal — FIXED: includes new students added after submission ──
 function ModifyModal({ record, onClose }) {
   const qc = useQueryClient();
   const [changes, setChanges] = useState({});
   const [reason, setReason] = useState('');
+
+  // Fetch the live class student list so newly-added students appear
+  const { data: liveClassData, isLoading: loadingClass } = useQuery({
+    queryKey: ['class-full-modify', record.class?._id],
+    queryFn: () => classesAPI.getOne(record.class?._id).then(r => r.data?.data),
+    enabled: !!record.class?._id,
+  });
+
+  // Map of already-recorded student IDs → record entry
+  const recordedMap = {};
+  (record.records || []).forEach(r => {
+    const sid = r.student?._id?.toString() || r.student?.toString();
+    if (sid) recordedMap[sid] = r;
+  });
+
+  // Students in the live class that are NOT in the submitted record
+  const liveStudents = liveClassData?.students || [];
+  const newStudents = liveStudents.filter(s => !recordedMap[s._id?.toString()]);
+
   const modifyMutation = useMutation({
     mutationFn: (data) => attendanceAPI.modifyStudentAttendance(record._id, data),
-    onSuccess: () => { toast.success('Attendance modified — audit saved'); qc.invalidateQueries(['admin-student-attendance']); onClose(); },
+    onSuccess: () => {
+      toast.success('Attendance modified — audit saved');
+      qc.invalidateQueries(['admin-student-attendance']);
+      onClose();
+    },
     onError: (err) => toast.error(err.response?.data?.message || 'Failed'),
   });
+
+  const totalChanges = Object.keys(changes).length;
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <div>
             <span style={{ fontWeight: 700 }}>Edit Attendance — {record.class?.name}</span>
-            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', marginTop: 2 }}>{formatDisplayDate(record.date)} · By {record.submittedByName}</div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', marginTop: 2 }}>
+              {formatDisplayDate(record.date)} · By {record.submittedByName}
+            </div>
           </div>
           <button className="btn btn-ghost btn-icon" onClick={onClose}><X size={18} /></button>
         </div>
+
         <div className="modal-body">
           <div className="alert alert-warning" style={{ marginBottom: 16 }}>
             <AlertTriangle size={14} style={{ flexShrink: 0 }} />
             <div>All changes are permanently logged in the audit trail.</div>
           </div>
-          <div className="table-container" style={{ marginBottom: 16 }}>
-            <table>
-              <thead><tr><th>ID</th><th>Name</th><th>Current</th><th>Change To</th></tr></thead>
-              <tbody>
-                {(record.records || []).map(r => {
-                  const newStatus = changes[r.student?._id];
-                  return (
-                    <tr key={r.student?._id} style={{ background: newStatus ? '#fffbeb' : undefined }}>
-                      <td><span className="code" style={{ fontSize: '0.72rem' }}>{r.student?.studentId || '—'}</span></td>
-                      <td style={{ fontWeight: newStatus ? 700 : 500 }}>{r.student?.name || '—'}</td>
-                      <td><StatusBadge status={r.status} /></td>
-                      <td>
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          {['present', 'absent'].map(s => (
-                            <button key={s} onClick={() => {
-                              if (s !== r.status) setChanges(c => ({ ...c, [r.student._id]: s }));
-                              else { const c = { ...changes }; delete c[r.student._id]; setChanges(c); }
-                            }}
-                              style={{
-                                padding: '3px 12px', borderRadius: 6, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600,
-                                border: `1.5px solid ${changes[r.student?._id] === s ? (s === 'present' ? '#16a34a' : '#dc2626') : 'var(--color-border)'}`,
-                                background: changes[r.student?._id] === s ? (s === 'present' ? '#16a34a' : '#dc2626') : 'white',
-                                color: changes[r.student?._id] === s ? 'white' : 'var(--color-text-secondary)',
-                              }}>
-                              {s === 'present' ? '✓ P' : '✗ A'}
-                            </button>
-                          ))}
+
+          {loadingClass ? (
+            <div className="loading-center" style={{ padding: 32 }}><div className="spinner" /></div>
+          ) : (
+            <div className="table-container" style={{ marginBottom: 16 }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Name</th>
+                    <th>Current Status</th>
+                    <th>Change To</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* ── Already-recorded students ── */}
+                  {(record.records || []).map(r => {
+                    const sid = r.student?._id?.toString() || r.student?.toString();
+                    const newStatus = changes[sid];
+                    return (
+                      <tr key={sid} style={{ background: newStatus ? '#fffbeb' : undefined }}>
+                        <td>
+                          <span className="code" style={{ fontSize: '0.72rem' }}>{r.student?.studentId || '—'}</span>
+                        </td>
+                        <td style={{ fontWeight: newStatus ? 700 : 500 }}>{r.student?.name || '—'}</td>
+                        <td><StatusBadge status={r.status} /></td>
+                        <td>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            {['present', 'absent'].map(s => (
+                              <button key={s} onClick={() => {
+                                if (s !== r.status) setChanges(c => ({ ...c, [sid]: s }));
+                                else { const c = { ...changes }; delete c[sid]; setChanges(c); }
+                              }}
+                                style={{
+                                  padding: '3px 12px', borderRadius: 6, cursor: 'pointer',
+                                  fontSize: '0.75rem', fontWeight: 600,
+                                  border: `1.5px solid ${changes[sid] === s ? (s === 'present' ? '#16a34a' : '#dc2626') : 'var(--color-border)'}`,
+                                  background: changes[sid] === s ? (s === 'present' ? '#16a34a' : '#dc2626') : 'white',
+                                  color: changes[sid] === s ? 'white' : 'var(--color-text-secondary)',
+                                }}>
+                                {s === 'present' ? '✓ P' : '✗ A'}
+                              </button>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+
+                  {/* ── New students: added to class after submission ── */}
+                  {newStudents.length > 0 && (
+                    <tr>
+                      <td colSpan={4} style={{
+                        padding: '10px 14px',
+                        background: 'linear-gradient(135deg, #fef9f0, #fefce8)',
+                        borderTop: '2px solid #fbbf24',
+                        borderBottom: '1px solid #fde68a',
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                          <UserPlus size={14} color="#d97706" />
+                          <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#92400e' }}>
+                            {newStudents.length} student{newStudents.length > 1 ? 's' : ''} added to this class after submission — select their status below
+                          </span>
                         </div>
                       </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                  )}
+                  {newStudents.map(s => {
+                    const sid = s._id?.toString();
+                    const selectedStatus = changes[sid];
+                    return (
+                      <tr key={sid} style={{
+                        background: selectedStatus
+                          ? (selectedStatus === 'present' ? 'rgba(22,163,74,0.05)' : 'rgba(220,38,38,0.05)')
+                          : 'linear-gradient(135deg, #fefce8, #fef9f0)',
+                        borderLeft: '3px solid #fbbf24',
+                      }}>
+                        <td>
+                          <span className="code" style={{ fontSize: '0.72rem' }}>{s.studentId || '—'}</span>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontWeight: 700 }}>{s.name}</span>
+                            <span style={{
+                              display: 'inline-flex', alignItems: 'center', gap: 3,
+                              padding: '1px 7px', borderRadius: 99,
+                              background: '#fef3c7', border: '1px solid #fbbf24',
+                              fontSize: '0.6rem', fontWeight: 800, color: '#92400e',
+                            }}>
+                              ✦ NEW
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 1 }}>
+                            {['PreKG', 'LKG', 'UKG'].includes(s.grade) ? s.grade : `Std ${s.grade}`}
+                          </div>
+                        </td>
+                        <td>
+                          <span style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                            padding: '3px 9px', borderRadius: 99,
+                            background: '#fef3c7', color: '#92400e',
+                            fontSize: '0.7rem', fontWeight: 700,
+                          }}>
+                            ⚠ Not Yet Recorded
+                          </span>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            {['present', 'absent'].map(st => (
+                              <button key={st} onClick={() => {
+                                if (selectedStatus === st) {
+                                  const c = { ...changes }; delete c[sid]; setChanges(c);
+                                } else {
+                                  setChanges(c => ({ ...c, [sid]: st }));
+                                }
+                              }}
+                                style={{
+                                  padding: '3px 12px', borderRadius: 6, cursor: 'pointer',
+                                  fontSize: '0.75rem', fontWeight: 600,
+                                  border: `1.5px solid ${selectedStatus === st ? (st === 'present' ? '#16a34a' : '#dc2626') : 'var(--color-border)'}`,
+                                  background: selectedStatus === st ? (st === 'present' ? '#16a34a' : '#dc2626') : 'white',
+                                  color: selectedStatus === st ? 'white' : 'var(--color-text-secondary)',
+                                }}>
+                                {st === 'present' ? '✓ P' : '✗ A'}
+                              </button>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           <div className="form-group">
             <label className="form-label">Reason (recommended)</label>
-            <textarea className="form-textarea" rows={2} value={reason} onChange={e => setReason(e.target.value)} placeholder="e.g., Parent confirmed child was present" />
+            <textarea
+              className="form-textarea"
+              rows={2}
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+              placeholder="e.g., Parent confirmed child was present; added late-enrolled students"
+            />
           </div>
         </div>
+
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={Object.keys(changes).length === 0 || modifyMutation.isPending}
+          <button
+            className="btn btn-primary"
+            disabled={totalChanges === 0 || modifyMutation.isPending}
             onClick={() => modifyMutation.mutate({
               changes: Object.entries(changes).map(([studentId, newStatus]) => ({ studentId, newStatus })),
-              reason
-            })}>
-            <Save size={15} /> Save {Object.keys(changes).length > 0 ? `${Object.keys(changes).length} Change(s)` : ''}
+              reason,
+            })}
+          >
+            <Save size={15} /> Save {totalChanges > 0 ? `${totalChanges} Change(s)` : ''}
           </button>
         </div>
       </div>
@@ -1748,7 +1876,6 @@ export default function AttendancePage({ initialTab }) {
     queryFn: () => settingsAPI.getActive().then(r => r.data?.data),
   });
 
-  // FIX 2: Added teacher-records and volunteer-records tabs for export functionality
   const tabsByRole = {
     admin: [
       { id: 'manage',           label: '📋 Student Records' },
@@ -1796,7 +1923,6 @@ export default function AttendancePage({ initialTab }) {
         </div>
       </div>
 
-      {/* Window Banner — admin and teacher */}
       {['admin', 'teacher'].includes(user.role) && (
         <WindowBanner
           user={user}
@@ -1805,7 +1931,6 @@ export default function AttendancePage({ initialTab }) {
         />
       )}
 
-      {/* Tab bar */}
       {tabs.length > 1 && (
         <div style={{ display: 'flex', gap: 4, marginBottom: 20, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
           {tabs.map(tab => (
@@ -1824,21 +1949,17 @@ export default function AttendancePage({ initialTab }) {
         </div>
       )}
 
-      {/* ── Teacher tabs ── */}
       {activeTab === 'submit'         && <TeacherMarkAttendance />}
       {activeTab === 'history'        && <TeacherAttendanceHistory />}
       {activeTab === 'my-attendance'  && <MyOwnAttendanceRecords />}
 
-      {/* ── Admin tabs ── */}
       {activeTab === 'manage'         && <AdminStudentAttendance />}
       {activeTab === 'submit-behalf'  && <AdminSubmitOnBehalf />}
       {activeTab === 'teachers'       && <StaffAttendancePanel type="teacher" />}
       {activeTab === 'volunteers'     && <StaffAttendancePanel type="volunteer" />}
-      {/* FIX 2: Export/records tabs now included */}
       {activeTab === 'teacher-records'  && <TeacherAttendanceRecords />}
       {activeTab === 'volunteer-records' && <VolunteerAttendanceRecords />}
 
-      {/* ── Editor tab ── */}
       {activeTab === 'submit-student' && <EditorStudentAttendance />}
     </div>
   );
