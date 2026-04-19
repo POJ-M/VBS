@@ -179,25 +179,45 @@ const modifyStudentAttendance = async (req, res, next) => {
     const auditChanges = [];
 
     for (const change of changes) {
-      const record = attendance.records.find(
-        (r) =>
-          r.student?._id?.toString() === change.studentId ||
-          r.student?.toString() === change.studentId
-      );
-      if (!record) continue;
-
-      const previousStatus = record.status;
-      if (previousStatus === change.newStatus) continue;
-
+    const record = attendance.records.find(
+      (r) =>
+        r.student?._id?.toString() === change.studentId ||
+        r.student?.toString() === change.studentId
+    );
+  
+    if (!record) {
+      // Student was added to the class AFTER attendance was submitted.
+      // Insert them as a new record entry.
+      const Student = require('../models/Student');
+      const studentDoc = await Student.findById(change.studentId)
+        .select('name studentId');
+  
+      attendance.records.push({
+        student: change.studentId,
+        status: change.newStatus,
+      });
+  
       auditChanges.push({
-        entityId: record.student?._id?.toString() || record.student?.toString(),
-        entityName: record.student?.name || 'Unknown',
-        previousStatus,
+        entityId: change.studentId,
+        entityName: studentDoc?.name || 'Unknown (new student)',
+        previousStatus: 'not_recorded',
         newStatus: change.newStatus,
       });
-
-      record.status = change.newStatus;
+      continue;
     }
+  
+    const previousStatus = record.status;
+    if (previousStatus === change.newStatus) continue;
+  
+    auditChanges.push({
+      entityId: record.student?._id?.toString() || record.student?.toString(),
+      entityName: record.student?.name || 'Unknown',
+      previousStatus,
+      newStatus: change.newStatus,
+    });
+  
+    record.status = change.newStatus;
+  }
 
     if (auditChanges.length === 0) {
       return res.status(400).json({ success: false, message: 'No actual changes detected' });
