@@ -212,14 +212,14 @@ function DailyReport({ date, vbsYear, vbsStartDate, vbsEndDate }) {
       { l: 'Teachers Absent', v: summary?.teachers?.absent ?? 0 },
       { l: 'Volunteers Present', v: summary?.volunteers?.present ?? 0 },
     ]);
-
+ 
     const stuSummaryRows = studentAttendance.map(a => {
       const p = a.records?.filter(r => r.status === 'present').length || 0;
       const ab = a.records?.filter(r => r.status === 'absent').length || 0;
       const t = p + ab;
       return `<tr><td>${a.class?.name}</td><td>${a.class?.category}</td><td>${p}</td><td>${ab}</td><td>${t > 0 ? Math.round((p / t) * 100) : 0}%</td><td>${a.submittedByName || '—'}</td><td>${a.isModified ? '⚠ Modified' : '✓ Original'}</td></tr>`;
     }).join('');
-
+ 
     const classBlocks = studentAttendance.map(a => {
       const p = a.records?.filter(r => r.status === 'present').length || 0;
       const ab = a.records?.filter(r => r.status === 'absent').length || 0;
@@ -243,10 +243,22 @@ function DailyReport({ date, vbsYear, vbsStartDate, vbsEndDate }) {
         <tbody>${studentRows}</tbody></table>
       </div>`;
     }).join('');
-
-    const tRows = teacherAttendance.map(t => `<tr><td>${t.teacher?.name || '—'}</td><td>${t.status}</td><td>${t.arrivalTime || '—'}</td><td>${t.remarks || '—'}</td></tr>`).join('');
-    const vRows = volunteerAttendance.map(v => `<tr><td>${v.volunteer?.name || '—'}</td><td>${v.volunteer?.role || '—'}</td><td>${v.status}</td><td>${v.shift || '—'}</td></tr>`).join('');
-
+ 
+    // ── CHANGED: Status badge helpers for color in printed PDF ──────────────────
+    const tStatusBadge = (s) => {
+      const styles = { present: 'background:#dcfce7;color:#15803d', absent: 'background:#fee2e2;color:#b91c1c', late: 'background:#fef9c3;color:#a16207', leave: 'background:#ede9fe;color:#6d28d9' };
+      const st = styles[s] || 'background:#f1f5f9;color:#475569';
+      return `<span style="${st};font-weight:700;padding:2px 9px;border-radius:4px;font-size:8pt;text-transform:capitalize">${s}</span>`;
+    };
+    const vStatusBadge = (s) => {
+      const styles = { present: 'background:#dcfce7;color:#15803d', absent: 'background:#fee2e2;color:#b91c1c', halfDay: 'background:#ffedd5;color:#c2410c', late: 'background:#fef9c3;color:#a16207' };
+      const st = styles[s] || 'background:#f1f5f9;color:#475569';
+      const label = s === 'halfDay' ? 'Half Day' : s;
+      return `<span style="${st};font-weight:700;padding:2px 9px;border-radius:4px;font-size:8pt;text-transform:capitalize">${label}</span>`;
+    };
+    const tRows = teacherAttendance.map(t => `<tr><td>${t.teacher?.name || '—'}</td><td>${tStatusBadge(t.status)}</td><td>${t.arrivalTime || '—'}</td><td>${t.remarks || '—'}</td></tr>`).join('');
+    const vRows = volunteerAttendance.map(v => `<tr><td>${v.volunteer?.name || '—'}</td><td>${v.volunteer?.role || '—'}</td><td>${vStatusBadge(v.status)}</td><td>${v.shift || '—'}</td></tr>`).join('');
+ 
     const body = `
       <div class="section-head">Summary by Class</div>
       ${mkTable(['Class', 'Category', 'Present', 'Absent', 'Rate', 'Submitted By', 'Status'], stuSummaryRows)}
@@ -256,7 +268,7 @@ function DailyReport({ date, vbsYear, vbsStartDate, vbsEndDate }) {
       ${tRows ? `<div class="section-head">Teacher Attendance</div>${mkTable(['Teacher', 'Status', 'Arrival', 'Remarks'], tRows)}` : ''}
       ${vRows ? `<div class="section-head">Volunteer Attendance</div>${mkTable(['Volunteer', 'Role', 'Status', 'Shift'], vRows)}` : ''}
     `;
-
+ 
     printPage(`Daily Attendance — ${fmtDateFull(date)}`, body, sum, vbsYear);
   };
 
