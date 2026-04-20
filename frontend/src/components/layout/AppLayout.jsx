@@ -18,6 +18,7 @@ const PAGE_TITLES = {
   '/verification': 'Verification Queue',
   '/analytics': 'Analytics',
   '/reports': 'Reports',
+  '/extra-reports': 'Extra Reports',
   '/users': 'User Management',
   '/settings': 'VBS Settings',
   '/my-submissions': 'My Submissions',
