@@ -20,7 +20,6 @@ import AttendancePage from './pages/AttendancePage';
 import VerificationQueuePage from './pages/VerificationQueuePage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import ReportsPage from './pages/ReportsPage';
-import ExtraReportsPage from './pages/ExtraReportsPage';
 import MySubmissionsPage from './pages/MySubmissionsPage';
 import { TeacherExportPage } from './pages/TeacherPages';
 import QRAttendancePage from './pages/QRAttendancePage';
