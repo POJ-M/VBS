@@ -223,6 +223,8 @@ export const reportsAPI = {
   getVillageList: (params) => api.get('/reports/villages', { params }),
   getVillage: (params) => api.get('/reports/village', { params }),
   getCategory: (category, params) => api.get(`/reports/category/${category}`, { params }),
+  getStudentAttendanceReport: (category, params) => api.get(`/reports/student-attendance/${category}`, { params }),
+  getReligionReport: (params) => api.get('/reports/religion', { params }),
 };
 
 // ─── Settings ─────────────────────────────────────────────────────
