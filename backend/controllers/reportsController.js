@@ -525,8 +525,175 @@ const getCategoryReport = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+// @desc    Student Attendance Report by Category (all students, date columns)
+// @route   GET /api/reports/student-attendance/:category
+const getStudentAttendanceReport = async (req, res, next) => {
+  try {
+    const { category } = req.params;
+    const { vbsYear } = req.query;
+    const validCats = ['Beginner', 'Primary', 'Junior', 'Inter'];
+    if (!validCats.includes(category)) {
+      return res.status(400).json({ success: false, message: 'Invalid category' });
+    }
+
+    const filter = { category, isActive: true };
+    if (vbsYear) filter.vbsYear = Number(vbsYear);
+
+    const students = await Student.find(filter)
+      .populate('classAssigned', 'name category')
+      .sort({ studentId: 1 });
+
+    const studentIds = students.map(s => s._id);
+    const attFilter = { 'records.student': { $in: studentIds } };
+    if (vbsYear) attFilter.vbsYear = Number(vbsYear);
+
+    const attendanceRecords = await StudentAttendance.find(attFilter).sort({ date: 1 });
+
+    const dateSet = new Set();
+    attendanceRecords.forEach(rec => {
+      dateSet.add(normalizeToISTMidnight(rec.date).toISOString());
+    });
+    const sortedDates = [...dateSet].sort().map((iso, i) => {
+      const d = new Date(iso);
+      return {
+        iso, dayNum: i + 1,
+        dateStr: d.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: '2-digit', year: 'numeric' }),
+        dayLabel: d.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short' }),
+      };
+    });
+
+    const attMap = {};
+    attendanceRecords.forEach(rec => {
+      const dateIso = normalizeToISTMidnight(rec.date).toISOString();
+      rec.records.forEach(r => {
+        const sid = r.student?.toString();
+        if (!sid) return;
+        if (!attMap[sid]) attMap[sid] = {};
+        attMap[sid][dateIso] = r.status;
+      });
+    });
+
+    const rows = students.map((s, idx) => {
+      const sid = s._id.toString();
+      const daily = sortedDates.map(d => attMap[sid]?.[d.iso] || null);
+      const totalPresent = daily.filter(v => v === 'present').length;
+      const totalAbsent = daily.filter(v => v === 'absent').length;
+      const totalRecorded = totalPresent + totalAbsent;
+      return {
+        sno: idx + 1,
+        studentId: s.studentId || '—',
+        name: s.name,
+        grade: s.grade,
+        gender: s.gender,
+        village: s.village || '',
+        contactNumber: s.contactNumber || '',
+        classAssigned: s.classAssigned?.name || 'Unassigned',
+        daily,
+        totalPresent,
+        totalAbsent,
+        totalRecorded,
+        percentage: totalRecorded > 0 ? Math.round((totalPresent / totalRecorded) * 100) : 0,
+      };
+    });
+
+    const grandTotalPresent = rows.reduce((s, r) => s + r.totalPresent, 0);
+    const grandTotalRecorded = rows.reduce((s, r) => s + r.totalRecorded, 0);
+
+    res.json({
+      success: true,
+      data: {
+        category,
+        totalStudents: students.length,
+        dates: sortedDates,
+        rows,
+        summary: {
+          grandTotalPresent,
+          grandTotalRecorded,
+          overallRate: grandTotalRecorded > 0 ? Math.round((grandTotalPresent / grandTotalRecorded) * 100) : 0,
+        },
+      },
+    });
+  } catch (err) { next(err); }
+};
+
+// @desc    Religion-wise Student Report
+// @route   GET /api/reports/religion
+const getReligionReport = async (req, res, next) => {
+  try {
+    const { vbsYear, religion } = req.query;
+    const baseFilter = { isActive: true };
+    if (vbsYear) baseFilter.vbsYear = Number(vbsYear);
+
+    const religionDistrib = await Student.aggregate([
+      { $match: baseFilter },
+      { $group: { _id: '$religion', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]);
+
+    const denomDistrib = await Student.aggregate([
+      { $match: { ...baseFilter, religion: 'Christian', christianDenomination: { $exists: true, $ne: '' } } },
+      { $group: { _id: '$christianDenomination', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]);
+
+    const catByReligion = await Student.aggregate([
+      { $match: baseFilter },
+      { $group: { _id: { religion: '$religion', category: '$category' }, count: { $sum: 1 } } },
+      { $sort: { '_id.religion': 1, '_id.category': 1 } },
+    ]);
+
+    let religionStudents = null;
+    if (religion) {
+      const filter = { ...baseFilter, religion };
+      const students = await Student.find(filter)
+        .populate('classAssigned', 'name category')
+        .sort({ category: 1, studentId: 1 });
+
+      const studentIds = students.map(s => s._id);
+      const attFilter = { 'records.student': { $in: studentIds } };
+      if (vbsYear) attFilter.vbsYear = Number(vbsYear);
+
+      const attendanceRecords = await StudentAttendance.find(attFilter);
+      const attMap = buildAttMap(attendanceRecords);
+
+      religionStudents = students.map((s, idx) => {
+        const att = attMap[s._id.toString()] || { present: 0, total: 0 };
+        return {
+          sno: idx + 1,
+          studentId: s.studentId || '—',
+          name: s.name,
+          grade: s.grade,
+          gender: s.gender,
+          category: s.category,
+          christianDenomination: s.christianDenomination || '',
+          village: s.village || '',
+          contactNumber: s.contactNumber || '',
+          classAssigned: s.classAssigned?.name || 'Unassigned',
+          attendance: {
+            present: att.present,
+            total: att.total,
+            rate: att.total > 0 ? Math.round((att.present / att.total) * 100) : 0,
+          },
+        };
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        religionDistribution: religionDistrib,
+        denominationDistribution: denomDistrib,
+        categoryByReligion: catByReligion,
+        religionStudents,
+        selectedReligion: religion || null,
+      },
+    });
+  } catch (err) { next(err); }
+};
+
 module.exports = {
   getDailyReport, getClassReport, getStudentReport, getTeacherReport,
   getVolunteerReport, getFullYearReport,
   getVillageList, getVillageReport, getCategoryReport,
+  getStudentAttendanceReport, getReligionReport,  // ← ADD THESE
 };
