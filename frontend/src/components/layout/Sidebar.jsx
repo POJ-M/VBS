@@ -22,6 +22,7 @@ const NAV = {
     { icon: CheckSquare, label: 'Verification', path: '/verification', badge: true },
     { icon: BarChart3, label: 'Analytics', path: '/analytics' },
     { icon: FileText, label: 'Reports', path: '/reports' },
+    { icon: FileText, label: 'Extra Reports', path: '/extra-reports' },
     { icon: Users, label: 'Users', path: '/users' },
     { icon: Settings, label: 'Settings', path: '/settings' },
   ],
@@ -41,6 +42,8 @@ const NAV = {
     { icon: BookOpen, label: 'Classes', path: '/classes' },
     { icon: BarChart3, label: 'Analytics', path: '/analytics' },
     { icon: FileText, label: 'Reports', path: '/reports' },
+    { icon: FileText, label: 'Extra Reports', path: '/extra-reports' },
+
   ],
   teacher: [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
