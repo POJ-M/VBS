@@ -8,6 +8,7 @@ import AppLayout from './components/layout/AppLayout';
 import './styles/global.css';
 
 // Pages
+import ExtraReportsPage from './pages/ExtraReportsPage';
 import HomePage from './pages/HomePage';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
