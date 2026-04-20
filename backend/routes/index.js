@@ -28,7 +28,7 @@ const { getDashboardStats, getStudentAnalytics, getAttendanceTrends, getModifica
 const {
   getDailyReport, getClassReport, getStudentReport, getTeacherReport,
   getVolunteerReport, getFullYearReport,
-  getVillageList, getVillageReport, getCategoryReport,
+  getVillageList, getVillageReport, getCategoryReport, getStudentAttendanceReport, getReligionReport,
 } = require('../controllers/reportsController');
 const {
   getSettings, getActiveSettings, createSettings, updateSettings, activateYear,
@@ -189,6 +189,8 @@ router.get('/reports/class/:classId', protect, authorize('admin', 'viewer'), get
 router.get('/reports/student/:studentId', protect, authorize('admin', 'viewer'), getStudentReport);
 router.get('/reports/teacher/:teacherId', protect, authorize('admin', 'viewer'), getTeacherReport);
 router.get('/reports/volunteer/:volunteerId', protect, authorize('admin', 'viewer'), getVolunteerReport);
+router.get('/reports/student-attendance/:category', protect, authorize('admin', 'viewer'), getStudentAttendanceReport);
+router.get('/reports/religion', protect, authorize('admin', 'viewer'), getReligionReport);
 
 // ─── TEACHER EXPORT ──────────────────────────────────────────────────
 router.get('/teacher/export-data', protect, authorize('admin', 'teacher'), getTeacherExportData);
