@@ -19,6 +19,7 @@ import AttendancePage from './pages/AttendancePage';
 import VerificationQueuePage from './pages/VerificationQueuePage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import ReportsPage from './pages/ReportsPage';
+import ExtraReportsPage from './pages/ExtraReportsPage';
 import MySubmissionsPage from './pages/MySubmissionsPage';
 import { TeacherExportPage } from './pages/TeacherPages';
 import QRAttendancePage from './pages/QRAttendancePage';
@@ -118,6 +119,11 @@ function AppRoutes() {
           path="/reports"
           element={<RoleGate roles={['admin', 'viewer']}><ReportsPage /></RoleGate>}
         />
+        <Route
+          path="/extra-reports"
+          element={<RoleGate roles={['admin', 'viewer']}><ExtraReportsPage /></RoleGate>}
+        />
+        
         <Route
           path="/users"
           element={<RoleGate roles={['admin']}><UsersPage /></RoleGate>}
