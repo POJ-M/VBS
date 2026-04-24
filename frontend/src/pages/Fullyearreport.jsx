@@ -37,7 +37,7 @@ const headHtml = (title) => `
     <div class="hdr-top">
       <img class="logo" src="/poj-logo.png" alt="POJ Ministry" onerror="this.style.display='none'" />
       <div class="hdr-text">
-        <div class="church">${ministry}</div>
+        <div class="church">Presence of Jesus Ministry</div>
         <div class="vbs">${vbsTitle} — VBS ${vbsYear}</div>
         ${tagline ? `<div class="tagline">"${tagline}"</div>` : ''}
       </div>
