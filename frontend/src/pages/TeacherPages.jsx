@@ -70,7 +70,7 @@ const buildStudentDetailsPDF = (data) => {
     <div class="hdr-row">
       <img class="hdr-logo" src="/poj-logo.png" alt="Presence of Jesus Ministry" onerror="this.style.display='none'" />
       <div>
-        <div class="church-name">${ministry}</div>
+        <div class="church-name">Presence of Jesus Ministry</div>
         <div class="church-sub">Tuticorin, Tamil Nadu, India</div>
       </div>
     </div>
